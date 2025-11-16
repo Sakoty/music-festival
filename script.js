@@ -15,27 +15,44 @@ let soundTiltRight;
 
 
 //------------------------------------------------------
-//  初期化（ボタンを押した瞬間に音を初期再生）
+//  iPhone Safari のための「音解禁処理」
 //------------------------------------------------------
-function initSounds() {
-  soundNormal = loadSound("soundNormal",
+async function unlockAudio(audio) {
+  try {
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
+  } catch (e) {
+    console.log("Audio unlock failed:", e);
+  }
+}
+
+//------------------------------------------------------
+//  音の初期化（全音を iPhone に登録）
+//------------------------------------------------------
+async function initSounds() {
+  soundNormal = loadSound(
+    "soundNormal",
     "https://assets.mixkit.co/sfx/preview/mixkit-achievement-bell-600.mp3"
   );
-  soundRhythm = loadSound("soundRhythm",
+  soundRhythm = loadSound(
+    "soundRhythm",
     "https://assets.mixkit.co/sfx/preview/mixkit-arcade-mechanical-bling-210.mp3"
   );
-  soundTiltLeft = loadSound("soundTiltLeft",
+  soundTiltLeft = loadSound(
+    "soundTiltLeft",
     "https://assets.mixkit.co/sfx/preview/mixkit-retro-game-notification-212.mp3"
   );
-  soundTiltRight = loadSound("soundTiltRight",
+  soundTiltRight = loadSound(
+    "soundTiltRight",
     "https://assets.mixkit.co/sfx/preview/mixkit-arcade-space-shooter-dead-372.mp3"
   );
 
-  // 重要：最初に１回再生しておく（iOS 初期化）
-  soundNormal.play().then(() => {
-    soundNormal.pause();
-    soundNormal.currentTime = 0;
-  });
+  // 🔥 iPhone で音を鳴らすために必須 — 全部1回再生して解禁
+  await unlockAudio(soundNormal);
+  await unlockAudio(soundRhythm);
+  await unlockAudio(soundTiltLeft);
+  await unlockAudio(soundTiltRight);
 }
 
 
@@ -60,7 +77,7 @@ function detectTilt(gamma) {
 
 
 //------------------------------------------------------
-//  モーション検出
+//  振り検出
 //------------------------------------------------------
 let shakeCount = 0;
 let lastX = null, lastY = null, lastZ = null;
@@ -79,9 +96,9 @@ function initMotion() {
       return;
     }
 
-    const diff = Math.abs(x - lastX) + Math.abs(y - lastY) + Math.abs(z - lastZ);
+    const diff =
+      Math.abs(x - lastX) + Math.abs(y - lastY) + Math.abs(z - lastZ);
 
-    // 強く振ったとき
     if (diff > 15) {
       const now = Date.now();
 
@@ -108,7 +125,6 @@ function initMotion() {
     lastZ = z;
   });
 
-  // 傾き
   window.addEventListener("deviceorientation", (e) => {
     if (e.gamma == null) return;
     detectTilt(e.gamma);
@@ -117,10 +133,10 @@ function initMotion() {
 
 
 //------------------------------------------------------
-//  iOS / Android 両対応のパーミッション処理
+//  iOS / Android 両対応パーミッション
 //------------------------------------------------------
 async function requestSensorPermission() {
-  // iOS
+  // iPhone
   if (typeof DeviceMotionEvent.requestPermission === "function") {
     try {
       const p1 = await DeviceMotionEvent.requestPermission();
@@ -131,7 +147,7 @@ async function requestSensorPermission() {
     }
   }
 
-  // Android → そのまま許可とみなす
+  // Android
   return true;
 }
 
@@ -140,11 +156,9 @@ async function requestSensorPermission() {
 //  スタートボタン
 //------------------------------------------------------
 document.getElementById("start").addEventListener("click", async () => {
-  // 音の初期化
-  initSounds();
+  await initSounds();   // ←最重要！ボタン内で初期化
 
   const ok = await requestSensorPermission();
-
   if (!ok) {
     alert("センサーアクセスが許可されませんでした。");
     return;
