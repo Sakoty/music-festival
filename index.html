@@ -1,21 +1,22 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Motion Sound Advanced</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>モーション音アプリ</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-  <h1>Motion Sound Advanced</h1>
-  
-  <button id="start">センサーを有効化</button>
-  <p>※ iPhone では許可が必要</p>
+  <h1>モーション音アプリ</h1>
 
-  <h2>振った回数：<span id="count">0</span></h2>
-  <h2>リズム検出：<span id="rhythm">-</span></h2>
-  <h2>傾き方向：<span id="tilt">-</span></h2>
+  <button id="start">スタート</button>
+
+  <div class="info">
+    <p>振った回数：<span id="count">0</span></p>
+    <p>リズム：<span id="rhythm">-</span></p>
+    <p>傾き：<span id="tilt">-</span></p>
+  </div>
 
   <script src="script.js"></script>
 </body>
