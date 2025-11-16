@@ -1,22 +1,17 @@
 body {
   font-family: sans-serif;
   text-align: center;
-  padding: 40px 20px;
-  background: #fafafa;
+  padding: 20px;
 }
 
 button {
-  padding: 15px 20px;
-  background: #4a90e2;
-  border: none;
-  border-radius: 10px;
-  color: white;
+  padding: 12px 20px;
   font-size: 18px;
-  cursor: pointer;
-  margin-bottom: 30px;
+  border-radius: 8px;
 }
 
-h2 {
-  margin-top: 20px;
-  font-weight: normal;
+.info {
+  margin-top: 30px;
+  font-size: 20px;
+  line-height: 2;
 }
