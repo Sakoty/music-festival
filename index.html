@@ -1,151 +1,91 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Motion & Sound Controller</title>
-<style>
-  body { font-family: sans-serif; padding: 20px; }
-  .hidden { display: none; }
-  button { padding: 12px 20px; font-size: 18px; margin: 8px; }
-  .section { margin-top: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 10px; }
-  input[type=range] { width: 100%; }
-  label { font-weight: bold; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Motion→Sound 設定アプリ</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <h1>Motion → Sound 設定アプリ</h1>
 
-<h2>Motion × Sound System</h2>
+  <div class="top-row">
+    <button id="startBtn">▶ スタート（押して許可）</button>
+    <button id="openSettings">⚙ 設定</button>
+  </div>
 
-<button id="startBtn">▶ スタート</button>
-<button id="settingBtn">⚙ 設定</button>
+  <div id="status">状態：未開始</div>
 
-<!-- ===== 設定画面 ===== -->
-<div id="settings" class="section hidden">
-  <h3>設定</h3>
+  <section id="live" class="section">
+    <h2>ライブ</h2>
+    <div class="info-row">
+      <div>振った回数：<span id="count">0</span></div>
+      <div>リズム：<span id="rhythm">-</span></div>
+      <div>傾き：<span id="tilt">-</span></div>
+    </div>
+  </section>
 
-  <!-- ▼ 効果音選択 -->
-  <label>効果音を選ぶ</label><br>
-  <select id="soundSelect" style="width:100%; font-size:16px; padding:8px;">
-    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_5a89b19331.mp3">ポン</option>
-    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_9c650c3aef.mp3">コイン</option>
-    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_0c07ad012a.mp3">ポップ</option>
-    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_b77dae1f3d.mp3">クリック</option>
-  </select>
-  <br><br>
+  <section id="settingsPanel" class="section hidden">
+    <h2>設定（動作 → 音 を割り当て）</h2>
 
-  <!-- ▼ 自分の音追加 -->
-  <label>自分の効果音を追加（URL）</label><br>
-  <input id="soundUrl" type="text" placeholder="音声URLを入力" style="width:100%;">
-  <button id="addSoundBtn">追加</button>
-  <br><br>
+    <div class="grid">
+      <div>
+        <label>動作を選択</label>
+        <select id="actionSelect">
+          <option value="shake">1. Shake（強く振る）</option>
+          <option value="smallShake">2. Small Shake（弱めの振り）</option>
+          <option value="rhythmShake">3. Rhythm Shake（一定間隔）</option>
+          <option value="tiltRight">4. Tilt Right（右傾け）</option>
+          <option value="tiltLeft">5. Tilt Left（左傾け）</option>
+          <option value="faceUp">6. Face Up（上向き）</option>
+          <option value="faceDown">7. Face Down（下向き）</option>
+          <option value="roll">8. Roll（α回転差）</option>
+          <option value="pitch">9. Pitch（β変化）</option>
+          <option value="spin">10. Spin（高速回転）</option>
+        </select>
+      </div>
 
-  <!-- ▼ 音量 -->
-  <label>音量</label><br>
-  <input type="range" id="volume" min="0" max="1" step="0.01" value="1"><br><br>
+      <div>
+        <label>効果音を選択</label>
+        <select id="soundSelect"></select>
+        <div style="margin-top:8px">
+          <button id="previewSound">▶ プレビュー</button>
+        </div>
+      </div>
 
-  <!-- ▼ 感度 -->
-  <label>感度（振る強さ）</label><br>
-  <input type="range" id="sensitivity" min="10" max="50" value="25">
-  <p>※ 小さいほど反応しやすい</p>
-</div>
+      <div>
+        <label>カスタム音（URL）</label>
+        <input id="customUrl" type="text" placeholder="https://.../sound.mp3" />
+        <button id="addCustom">追加</button>
+      </div>
 
-<p id="status">モーション：未取得</p>
+      <div>
+        <label>音量</label>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="1" />
+      </div>
 
-<audio id="se"></audio>
+      <div>
+        <label>感度（振るしきい値）</label>
+        <input id="sensitivity" type="range" min="8" max="40" step="1" value="20" />
+        <small>小さいほど反応しやすい</small>
+      </div>
 
-<script>
-const startBtn = document.getElementById("startBtn");
-const settingBtn = document.getElementById("settingBtn");
-const settings = document.getElementById("settings");
+      <div>
+        <label>リズム判定間隔（ms）</label>
+        <input id="rhythmMin" type="number" value="300" /> 〜
+        <input id="rhythmMax" type="number" value="600" />
+      </div>
+    </div>
 
-const se = document.getElementById("se");
-const soundSelect = document.getElementById("soundSelect");
+    <div style="margin-top:12px;">
+      <button id="assignBtn">この動作に割り当てる</button>
+      <button id="saveSettings">保存（localStorage）</button>
+    </div>
 
-const addSoundBtn = document.getElementById("addSoundBtn");
-const soundUrl = document.getElementById("soundUrl");
+    <h3>現在のルール</h3>
+    <ul id="rulesList" class="rules"></ul>
+  </section>
 
-const volumeSlider = document.getElementById("volume");
-const sensitivitySlider = document.getElementById("sensitivity");
-
-const statusText = document.getElementById("status");
-let motionEnabled = false;
-
-// ===== 設定画面表示切り替え =====
-settingBtn.addEventListener("click", () => {
-  settings.classList.toggle("hidden");
-});
-
-// ===== 効果音を選んだら即変更 =====
-soundSelect.addEventListener("change", () => {
-  se.src = soundSelect.value;
-});
-
-// ===== 自分の音を追加する =====
-addSoundBtn.addEventListener("click", () => {
-  if (!soundUrl.value) return;
-  
-  const option = document.createElement("option");
-  option.value = soundUrl.value;
-  option.textContent = "カスタム音：" + soundUrl.value.split("/").pop();
-
-  soundSelect.appendChild(option);
-  soundSelect.value = option.value;
-
-  se.src = option.value;
-
-  alert("効果音を追加しました！");
-  soundUrl.value = "";
-});
-
-// ===== 音量変更 =====
-volumeSlider.addEventListener("input", () => {
-  se.volume = volumeSlider.value;
-});
-
-// ===== スタート（音許可 & モーション許可） =====
-startBtn.addEventListener("click", async () => {
-  // iPhoneの音再生許可
-  try { await se.play(); se.pause(); se.currentTime = 0; } catch {}
-
-  // iPhoneモーション許可
-  if (typeof DeviceMotionEvent !== "undefined" &&
-      typeof DeviceMotionEvent.requestPermission === "function") {
-
-    const permission = await DeviceMotionEvent.requestPermission();
-    if (permission === "granted") {
-      startMotion();
-    } else {
-      alert("モーションセンサーが許可されませんでした");
-    }
-
-  } else {
-    startMotion();
-  }
-});
-
-function startMotion() {
-  motionEnabled = true;
-  window.addEventListener("devicemotion", handleMotion);
-  statusText.textContent = "モーション：OK（取得中）";
-  alert("準備OK！スマホを振ってください。");
-}
-
-// ===== モーションを検知 =====
-function handleMotion(e) {
-  if (!motionEnabled) return;
-
-  const acc = e.accelerationIncludingGravity;
-  const power = Math.abs(acc.x) + Math.abs(acc.y) + Math.abs(acc.z);
-
-  const threshold = Number(sensitivitySlider.value);
-
-  if (power > threshold) {
-    se.currentTime = 0;
-    se.play();
-  }
-}
-</script>
-
+  <script src="script.js"></script>
 </body>
 </html>
