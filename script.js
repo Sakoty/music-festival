@@ -15,20 +15,7 @@ let soundTiltRight;
 
 
 //------------------------------------------------------
-//  iPhone Safari のための「音解禁処理」
-//------------------------------------------------------
-async function unlockAudio(audio) {
-  try {
-    await audio.play();
-    audio.pause();
-    audio.currentTime = 0;
-  } catch (e) {
-    console.log("Audio unlock failed:", e);
-  }
-}
-
-//------------------------------------------------------
-//  音の初期化（全音を iPhone に登録）
+//  音の初期化（音ファイル読み込み）
 //------------------------------------------------------
 async function initSounds() {
   soundNormal = loadSound(
@@ -47,12 +34,6 @@ async function initSounds() {
     "soundTiltRight",
     "https://assets.mixkit.co/sfx/preview/mixkit-arcade-space-shooter-dead-372.mp3"
   );
-
-  // 🔥 iPhone で音を鳴らすために必須 — 全部1回再生して解禁
-  await unlockAudio(soundNormal);
-  await unlockAudio(soundRhythm);
-  await unlockAudio(soundTiltLeft);
-  await unlockAudio(soundTiltRight);
 }
 
 
@@ -87,9 +68,7 @@ function initMotion() {
   window.addEventListener("devicemotion", (event) => {
     if (!event.acceleration) return;
 
-    const x = event.acceleration.x || 0;
-    const y = event.acceleration.y || 0;
-    const z = event.acceleration.z || 0;
+    const { x = 0, y = 0, z = 0 } = event.acceleration;
 
     if (lastX === null) {
       lastX = x; lastY = y; lastZ = z;
@@ -101,7 +80,6 @@ function initMotion() {
 
     if (diff > 15) {
       const now = Date.now();
-
       shakeCount++;
       document.getElementById("count").textContent = shakeCount;
 
@@ -136,34 +114,50 @@ function initMotion() {
 //  iOS / Android 両対応パーミッション
 //------------------------------------------------------
 async function requestSensorPermission() {
-  // iPhone
+  // iPhone Safari
   if (typeof DeviceMotionEvent.requestPermission === "function") {
     try {
       const p1 = await DeviceMotionEvent.requestPermission();
-      const p2 = await DeviceOrientationEvent.requestPermission();
+
+      let p2 = "granted";
+      if (typeof DeviceOrientationEvent.requestPermission === "function") {
+        p2 = await DeviceOrientationEvent.requestPermission();
+      }
+
       return p1 === "granted" && p2 === "granted";
     } catch {
       return false;
     }
   }
 
-  // Android
+  // iPhone Chrome / Android
   return true;
 }
 
 
 //------------------------------------------------------
-//  スタートボタン
+//  スタートボタン（iPhoneで音が確実に鳴る版）
 //------------------------------------------------------
 document.getElementById("start").addEventListener("click", async () => {
-  await initSounds();   // ←最重要！ボタン内で初期化
+  // -------- 無音を 1 回鳴らして iPhone の音を解禁 --------
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const emptyBuffer = ctx.createBuffer(1, 1, 22050);
+  const src = ctx.createBufferSource();
+  src.buffer = emptyBuffer;
+  src.connect(ctx.destination);
+  src.start(0);
 
+  // -------- 音読み込み --------
+  await initSounds();
+
+  // -------- センサー許可 --------
   const ok = await requestSensorPermission();
   if (!ok) {
     alert("センサーアクセスが許可されませんでした。");
     return;
   }
 
+  // -------- モーション開始 --------
   initMotion();
   alert("センサーが有効になりました！振ったり傾けてみてください！");
 });
