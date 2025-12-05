@@ -1,18 +1,91 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>iPhone Motion Test</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Motion→Sound 設定アプリ（iOS対応）</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <h1>Motion → Sound 設定アプリ</h1>
 
-<h1>Motion Test</h1>
-<button id="startBtn">START</button>
+  <div class="top-row">
+    <button id="startBtn">▶ スタート（必ず押して）</button>
+    <button id="openSettings">⚙ 設定</button>
+  </div>
 
-<p>Shake: <span id="shake">0</span></p>
-<p>Tilt: <span id="tilt">-</span></p>
+  <div id="status">状態：未開始</div>
 
-<script src="script.js"></script>
+  <section id="live" class="section">
+    <h2>ライブ</h2>
+    <div class="info-row">
+      <div>振った回数：<span id="count">0</span></div>
+      <div>リズム：<span id="rhythm">-</span></div>
+      <div>傾き：<span id="tilt">-</span></div>
+    </div>
+  </section>
+
+  <section id="settingsPanel" class="section hidden">
+    <h2>設定（動作 → 音 を割り当て）</h2>
+
+    <div class="grid">
+      <div>
+        <label>動作を選択</label>
+        <select id="actionSelect">
+          <option value="shake">1. Shake（強く振る）</option>
+          <option value="smallShake">2. Small Shake（弱めの振り）</option>
+          <option value="rhythmShake">3. Rhythm Shake（一定間隔）</option>
+          <option value="tiltRight">4. Tilt Right（右傾け）</option>
+          <option value="tiltLeft">5. Tilt Left（左傾け）</option>
+          <option value="faceUp">6. Face Up（上向き）</option>
+          <option value="faceDown">7. Face Down（下向き）</option>
+          <option value="roll">8. Roll（α回転差）</option>
+          <option value="pitch">9. Pitch（β変化）</option>
+          <option value="spin">10. Spin（高速回転）</option>
+        </select>
+      </div>
+
+      <div>
+        <label>効果音を選択</label>
+        <select id="soundSelect"></select>
+        <div style="margin-top:8px">
+          <button id="previewSound">▶ プレビュー</button>
+        </div>
+      </div>
+
+      <div>
+        <label>カスタム音（URL or data:）</label>
+        <input id="customUrl" type="text" placeholder="https://.../sound.mp3 か data:audio/... を入力" />
+        <button id="addCustom">追加</button>
+      </div>
+
+      <div>
+        <label>音量</label>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="1" />
+      </div>
+
+      <div>
+        <label>感度（振るしきい値）</label>
+        <input id="sensitivity" type="range" min="8" max="40" step="1" value="20" />
+        <small>小さいほど反応しやすい</small>
+      </div>
+
+      <div>
+        <label>リズム判定間隔（ms）</label>
+        <input id="rhythmMin" type="number" value="300" /> 〜
+        <input id="rhythmMax" type="number" value="600" />
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <button id="assignBtn">この動作に割り当てる</button>
+      <button id="saveSettings">保存（localStorage）</button>
+    </div>
+
+    <h3>現在のルール</h3>
+    <ul id="rulesList" class="rules"></ul>
+  </section>
+
+  <script src="script.js"></script>
 </body>
 </html>
