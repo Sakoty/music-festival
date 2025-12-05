@@ -24,21 +24,35 @@
 <div id="settings" class="section hidden">
   <h3>設定</h3>
 
+  <!-- ▼ 効果音選択 -->
+  <label>効果音を選ぶ</label><br>
+  <select id="soundSelect" style="width:100%; font-size:16px; padding:8px;">
+    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_5a89b19331.mp3">ポン</option>
+    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_9c650c3aef.mp3">コイン</option>
+    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_0c07ad012a.mp3">ポップ</option>
+    <option value="https://cdn.pixabay.com/audio/2022/03/15/audio_b77dae1f3d.mp3">クリック</option>
+  </select>
+  <br><br>
+
+  <!-- ▼ 自分の音追加 -->
+  <label>自分の効果音を追加（URL）</label><br>
+  <input id="soundUrl" type="text" placeholder="音声URLを入力" style="width:100%;">
+  <button id="addSoundBtn">追加</button>
+  <br><br>
+
+  <!-- ▼ 音量 -->
   <label>音量</label><br>
   <input type="range" id="volume" min="0" max="1" step="0.01" value="1"><br><br>
 
-  <label>効果音（URL を入力）</label><br>
-  <input id="soundUrl" type="text" placeholder="音声URLを入力" style="width:100%;">
-  <button id="loadSound">音を読み込む</button><br><br>
-
+  <!-- ▼ 感度 -->
   <label>感度（振る強さ）</label><br>
   <input type="range" id="sensitivity" min="10" max="50" value="25">
-  <p>小さいほど反応しやすい</p>
+  <p>※ 小さいほど反応しやすい</p>
 </div>
 
 <p id="status">モーション：未取得</p>
 
-<audio id="se" src="https://cdn.pixabay.com/audio/2022/03/15/audio_5a89b19331.mp3"></audio>
+<audio id="se"></audio>
 
 <script>
 const startBtn = document.getElementById("startBtn");
@@ -46,14 +60,15 @@ const settingBtn = document.getElementById("settingBtn");
 const settings = document.getElementById("settings");
 
 const se = document.getElementById("se");
+const soundSelect = document.getElementById("soundSelect");
+
+const addSoundBtn = document.getElementById("addSoundBtn");
 const soundUrl = document.getElementById("soundUrl");
-const loadSound = document.getElementById("loadSound");
 
 const volumeSlider = document.getElementById("volume");
 const sensitivitySlider = document.getElementById("sensitivity");
 
 const statusText = document.getElementById("status");
-
 let motionEnabled = false;
 
 // ===== 設定画面表示切り替え =====
@@ -61,51 +76,62 @@ settingBtn.addEventListener("click", () => {
   settings.classList.toggle("hidden");
 });
 
+// ===== 効果音を選んだら即変更 =====
+soundSelect.addEventListener("change", () => {
+  se.src = soundSelect.value;
+});
+
+// ===== 自分の音を追加する =====
+addSoundBtn.addEventListener("click", () => {
+  if (!soundUrl.value) return;
+  
+  const option = document.createElement("option");
+  option.value = soundUrl.value;
+  option.textContent = "カスタム音：" + soundUrl.value.split("/").pop();
+
+  soundSelect.appendChild(option);
+  soundSelect.value = option.value;
+
+  se.src = option.value;
+
+  alert("効果音を追加しました！");
+  soundUrl.value = "";
+});
+
 // ===== 音量変更 =====
 volumeSlider.addEventListener("input", () => {
   se.volume = volumeSlider.value;
 });
 
-// ===== 効果音変更 =====
-loadSound.addEventListener("click", () => {
-  if (soundUrl.value) {
-    se.src = soundUrl.value;
-    alert("効果音を読み込みました！");
-  }
-});
-
-// ===== スタート =====
+// ===== スタート（音許可 & モーション許可） =====
 startBtn.addEventListener("click", async () => {
-  // ===== 音の再生許可 =====
-  try {
-    await se.play();
-    se.pause();
-    se.currentTime = 0;
-  } catch {}
+  // iPhoneの音再生許可
+  try { await se.play(); se.pause(); se.currentTime = 0; } catch {}
 
-  // ===== iPhoneモーション許可 =====
+  // iPhoneモーション許可
   if (typeof DeviceMotionEvent !== "undefined" &&
       typeof DeviceMotionEvent.requestPermission === "function") {
 
     const permission = await DeviceMotionEvent.requestPermission();
     if (permission === "granted") {
-      motionEnabled = true;
-      window.addEventListener("devicemotion", handleMotion);
-      statusText.textContent = "モーション：OK（取得中）";
+      startMotion();
     } else {
-      statusText.textContent = "モーション：許可されていません";
+      alert("モーションセンサーが許可されませんでした");
     }
 
   } else {
-    motionEnabled = true;
-    window.addEventListener("devicemotion", handleMotion);
-    statusText.textContent = "モーション：OK（非iPhone）";
+    startMotion();
   }
-
-  alert("準備できました！スマホを振ってください。");
 });
 
-// ===== モーション処理 =====
+function startMotion() {
+  motionEnabled = true;
+  window.addEventListener("devicemotion", handleMotion);
+  statusText.textContent = "モーション：OK（取得中）";
+  alert("準備OK！スマホを振ってください。");
+}
+
+// ===== モーションを検知 =====
 function handleMotion(e) {
   if (!motionEnabled) return;
 
