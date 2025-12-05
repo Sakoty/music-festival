@@ -1,17 +1,19 @@
 body {
-  font-family: sans-serif;
+  font-family: Arial, sans-serif;
   text-align: center;
-  padding: 20px;
+  margin: 40px;
 }
 
 button {
-  padding: 12px 20px;
-  font-size: 18px;
-  border-radius: 8px;
+  font-size: 20px;
+  padding: 15px 30px;
+  border-radius: 10px;
+  border: none;
+  background: #007bff;
+  color: white;
 }
 
 .info {
   margin-top: 30px;
-  font-size: 20px;
-  line-height: 2;
+  font-size: 22px;
 }
