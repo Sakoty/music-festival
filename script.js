@@ -1,6 +1,4 @@
-// ================================
-// 修正版 script.js（プレビュー確実再生 + モーション安定）
-// - このファイルを現在の script.js と置き換えてください
+// script.js - 完全版（index.html / style.css に対応）
 // ================================
 
 /* ------------- 定数 ------------- */
@@ -88,7 +86,8 @@ function renderRules() {
   for (const actionKey in ACTIONS) {
     const li = document.createElement("li");
     const assigned = rules[actionKey] || "-";
-    li.innerHTML = `<div><strong>${ACTIONS[actionKey]}</strong> → <span class="assigned">${assigned}</span></div>`;
+    const name = ACTIONS[actionKey];
+    li.innerHTML = `<div><strong>${name}</strong> → <span class="assigned">${assigned}</span></div>`;
     const btn = document.createElement("button");
     btn.textContent = "解除";
     btn.addEventListener("click", () => {
@@ -126,14 +125,13 @@ async function unlockAudioContext() {
   }
 }
 
-// load buffer (decode) — may fail if CORS blocked
+// decode and cache
 async function loadBuffer(url) {
   if (!url) return null;
   if (buffers.hasOwnProperty(url)) return buffers[url];
   try {
     await ensureAudioContext();
     if (isDataUrl(url)) {
-      // decode base64 data URL
       const comma = url.indexOf(',');
       const meta = url.substring(5, comma);
       const isBase64 = meta.endsWith(';base64') || meta.includes(';base64');
@@ -224,32 +222,16 @@ assignBtn.addEventListener("click", () => {
   alert("割り当てました");
 });
 
-// ---------- CRITICAL: preview must run audio unlock + immediate playable path ----------
-// Strategy:
-// 1) resume & unlock WebAudio inside the click (user gesture)
-// 2) attempt to play via HTMLAudio immediately (this generally always works in click context)
-// 3) concurrently, start WebAudio loadBuffer (so future triggers use WebAudio)
+// ---------- preview: HTMLAudio play for >300ms then cleanup, plus background WebAudio preload ----------
 previewSound.addEventListener("click", async () => {
   const url = soundSelect.value;
   if (!url) return;
   statusEl.textContent = "状態：プレビュー再生中...";
 
-  // 1) resume/unlock in click
-  try {
-    await ensureAudioContext();
-    // silent unlock
-    try {
-      const empty = audioCtx.createBuffer(1,1,22050);
-      const src = audioCtx.createBufferSource();
-      src.buffer = empty;
-      src.connect(audioCtx.destination);
-      src.start(0);
-    } catch(e){}
-  } catch(e) {
-    console.warn("ensure/unlock failed", e);
-  }
+  // ensure unlock inside the click
+  try { await ensureAudioContext(); await unlockAudioContext(); } catch(e){}
 
-  // 2) try HTMLAudio immediate play (most reliable in the click event)
+  // HTMLAudio immediate play (user gesture)
   try {
     const a = new Audio(url);
     a.volume = volume;
@@ -257,19 +239,23 @@ previewSound.addEventListener("click", async () => {
     a.setAttribute("webkit-playsinline", "");
     a.style.display = "none";
     document.body.appendChild(a);
-    await a.play();          // ← this is inside user gesture so should succeed on iOS
-    // keep it paused/reset immediately so it's ready
-    a.pause();
-    a.currentTime = 0;
-    document.body.removeChild(a);
+
+    await a.play(); // must be in user gesture to succeed on iOS
+    // keep it alive for a short time so iOS actually emits sound
+    setTimeout(() => {
+      try { a.pause(); } catch(e){};
+      try { document.body.removeChild(a); } catch(e){};
+    }, 350);
+
     statusEl.textContent = "状態：準備完了";
   } catch (e) {
     console.warn("HTMLAudio preview failed", e);
+    statusEl.textContent = "状態：プレビュー失敗";
   }
 
-  // 3) preload WebAudio buffer in background for lower-latency later
+  // background decode for WebAudio (non-blocking)
   (async () => {
-    try { await loadBuffer(url); } catch(e){ console.warn("background loadBuffer failed", e); }
+    try { await loadBuffer(url); } catch(e) { /* ignore */ }
   })();
 });
 
