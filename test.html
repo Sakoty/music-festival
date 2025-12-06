@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ja">
+<body>
+<h2>iOS 音テスト</h2>
+
+<button id="btn">音を鳴らす（必ずタップ）</button>
+<p id="status"></p>
+
+<script>
+let audioCtx;
+
+document.getElementById("btn").addEventListener("click", async () => {
+  const status = document.getElementById("status");
+
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await audioCtx.resume();
+    status.textContent = "AudioContext: " + audioCtx.state;
+  } catch(e) {
+    status.textContent = "AudioContext error: " + e;
+  }
+
+  try {
+    // 1秒の440Hz（A）の正弦波を強制再生（デコードなし）
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.5;
+    osc.frequency.value = 440;
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 1);
+    status.textContent += " | 正弦波を再生しました。";
+  } catch(e) {
+    status.textContent += " | Oscillator error: " + e;
+  }
+});
+</script>
+</body>
+</html>
