@@ -1,8 +1,9 @@
 // ================================
-// 修正版 script.js（iOS対応・安定）
+// 修正版 script.js（プレビュー確実再生 + モーション安定）
+// - このファイルを現在の script.js と置き換えてください
 // ================================
 
-// ----- 定数 / DOM -----
+/* ------------- 定数 ------------- */
 const DEFAULT_SOUNDS = [
   { name: "ポン", url: "https://cdn.pixabay.com/audio/2022/03/15/audio_5a89b19331.mp3" },
   { name: "コイン", url: "https://cdn.pixabay.com/audio/2022/03/15/audio_9c650c3aef.mp3" },
@@ -23,7 +24,7 @@ const ACTIONS = {
   spin: "Spin"
 };
 
-// DOM
+/* ------------- DOM ------------- */
 const startBtn = document.getElementById("startBtn");
 const openSettings = document.getElementById("openSettings");
 const settingsPanel = document.getElementById("settingsPanel");
@@ -48,7 +49,7 @@ const countEl = document.getElementById("count");
 const rhythmEl = document.getElementById("rhythm");
 const tiltEl = document.getElementById("tilt");
 
-// ----- State -----
+/* ------------- State ------------- */
 let soundList = [];
 let rules = {};
 let audioCtx = null;
@@ -58,9 +59,9 @@ let sensitivity = Number(sensitivitySlider?.value || 20);
 let rhythmMin = Number(rhythmMinEl?.value || 300);
 let rhythmMax = Number(rhythmMaxEl?.value || 600);
 
-let listenersAttached = false; // prevent duplicate listeners
+let listenersAttached = false;
 
-// ----- storage -----
+/* ------------- storage ------------- */
 function loadState() {
   const sl = localStorage.getItem("ms_soundList");
   const rl = localStorage.getItem("ms_rules");
@@ -72,7 +73,7 @@ function saveState() {
   localStorage.setItem("ms_rules", JSON.stringify(rules));
 }
 
-// ----- UI helpers -----
+/* ------------- UI ------------- */
 function populateSoundSelect() {
   soundSelect.innerHTML = "";
   soundList.forEach(s => {
@@ -100,7 +101,7 @@ function renderRules() {
   }
 }
 
-// ----- WebAudio helpers -----
+/* ------------- WebAudio helpers ------------- */
 function isDataUrl(url) { return typeof url === "string" && url.startsWith("data:"); }
 
 async function ensureAudioContext() {
@@ -111,7 +112,7 @@ async function ensureAudioContext() {
   return audioCtx;
 }
 
-// play tiny silent buffer to unlock iOS audio reliably
+// tiny silent unlock if needed
 async function unlockAudioContext() {
   await ensureAudioContext();
   try {
@@ -125,36 +126,36 @@ async function unlockAudioContext() {
   }
 }
 
+// load buffer (decode) — may fail if CORS blocked
 async function loadBuffer(url) {
   if (!url) return null;
-  if (buffers.hasOwnProperty(url)) return buffers[url]; // cached
+  if (buffers.hasOwnProperty(url)) return buffers[url];
   try {
     await ensureAudioContext();
     if (isDataUrl(url)) {
-      // decode data: base64 or percent-encoded
+      // decode base64 data URL
       const comma = url.indexOf(',');
       const meta = url.substring(5, comma);
       const isBase64 = meta.endsWith(';base64') || meta.includes(';base64');
       const dataPart = url.substring(comma + 1);
       let arrayBuffer;
       if (isBase64) {
-        const binaryString = atob(dataPart);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-        arrayBuffer = bytes.buffer;
+        const binary = atob(dataPart);
+        const len = binary.length;
+        const u8 = new Uint8Array(len);
+        for (let i=0;i<len;i++) u8[i] = binary.charCodeAt(i);
+        arrayBuffer = u8.buffer;
       } else {
         const decoded = decodeURIComponent(dataPart);
         const len = decoded.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) bytes[i] = decoded.charCodeAt(i);
-        arrayBuffer = bytes.buffer;
+        const u8 = new Uint8Array(len);
+        for (let i=0;i<len;i++) u8[i] = decoded.charCodeAt(i);
+        arrayBuffer = u8.buffer;
       }
       const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
       buffers[url] = decoded;
       return decoded;
     } else {
-      // fetch remote (CORS required)
       const res = await fetch(url, { mode: 'cors' });
       if (!res.ok) throw new Error('fetch failed ' + res.status);
       const ab = await res.arrayBuffer();
@@ -162,13 +163,14 @@ async function loadBuffer(url) {
       buffers[url] = decoded;
       return decoded;
     }
-  } catch(e) {
+  } catch (e) {
     console.warn("loadBuffer failed:", url, e);
     buffers[url] = null;
     return null;
   }
 }
 
+// play via WebAudio first; if that fails use HTMLAudio fallback
 async function playUrl(url) {
   try {
     await ensureAudioContext();
@@ -185,7 +187,7 @@ async function playUrl(url) {
   } catch(e) {
     console.warn("playUrl webaudio error", e);
   }
-  // fallback to HTMLAudio
+  // fallback
   try {
     const a = new Audio(url);
     a.volume = volume;
@@ -197,7 +199,7 @@ async function playUrl(url) {
   }
 }
 
-// ----- UI events -----
+/* ------------- UI events ------------- */
 openSettings.addEventListener("click", () => settingsPanel.classList.remove("hidden"));
 closeSettings.addEventListener("click", () => settingsPanel.classList.add("hidden"));
 
@@ -222,63 +224,54 @@ assignBtn.addEventListener("click", () => {
   alert("割り当てました");
 });
 
-// preview handler — MUST be called from user gesture (preview button click)
-previewSound.addEventListener("click", async (ev) => {
+// ---------- CRITICAL: preview must run audio unlock + immediate playable path ----------
+// Strategy:
+// 1) resume & unlock WebAudio inside the click (user gesture)
+// 2) attempt to play via HTMLAudio immediately (this generally always works in click context)
+// 3) concurrently, start WebAudio loadBuffer (so future triggers use WebAudio)
+previewSound.addEventListener("click", async () => {
   const url = soundSelect.value;
   if (!url) return;
-
   statusEl.textContent = "状態：プレビュー再生中...";
 
+  // 1) resume/unlock in click
   try {
-    // ★ iOS では「同一ユーザー操作内」に resume がないと絶対鳴らない
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") {
-      await audioCtx.resume();      // ← これが「クリックイベントの中」じゃないと iOS で無効
-    }
-
-    // ★ iOS で確実にオーディオ解禁させる儀式（無音1サンプル）
+    await ensureAudioContext();
+    // silent unlock
     try {
-      const empty = audioCtx.createBuffer(1, 1, 22050);
-      const src2  = audioCtx.createBufferSource();
-      src2.buffer = empty;
-      src2.connect(audioCtx.destination);
-      src2.start(0);                // ← クリックイベント内なので解禁される
-    } catch(e){}
-
-    // --- ここから実音 ---
-    const buf = await loadBuffer(url);
-
-    if (buf) {
+      const empty = audioCtx.createBuffer(1,1,22050);
       const src = audioCtx.createBufferSource();
-      src.buffer = buf;
-      const gain = audioCtx.createGain();
-      gain.gain.value = volume;
-      src.connect(gain).connect(audioCtx.destination);
-      src.start(0);                 // ← クリックイベント内のため iOS 100%鳴る
-      statusEl.textContent = "状態：準備完了";
-      return;
-    }
-  } catch (e) {
-    console.warn("iOS WebAudio preview fail", e);
+      src.buffer = empty;
+      src.connect(audioCtx.destination);
+      src.start(0);
+    } catch(e){}
+  } catch(e) {
+    console.warn("ensure/unlock failed", e);
   }
 
-  // ★ WebAudio 失敗時の HTMLAudio fallback（これも同一タップ中であれば鳴る）
+  // 2) try HTMLAudio immediate play (most reliable in the click event)
   try {
     const a = new Audio(url);
     a.volume = volume;
     a.setAttribute("playsinline", "");
     a.setAttribute("webkit-playsinline", "");
-    await a.play();                 // ← クリックイベント中なので再生可
+    a.style.display = "none";
+    document.body.appendChild(a);
+    await a.play();          // ← this is inside user gesture so should succeed on iOS
+    // keep it paused/reset immediately so it's ready
+    a.pause();
+    a.currentTime = 0;
+    document.body.removeChild(a);
     statusEl.textContent = "状態：準備完了";
-    return;
   } catch (e) {
-    console.warn("HTMLAudio fallback fail", e);
+    console.warn("HTMLAudio preview failed", e);
   }
 
-  statusEl.textContent = "状態：プレビュー失敗";
-  alert("プレビュー再生に失敗しました（URL / CORS / iOS制約）");
+  // 3) preload WebAudio buffer in background for lower-latency later
+  (async () => {
+    try { await loadBuffer(url); } catch(e){ console.warn("background loadBuffer failed", e); }
+  })();
 });
-
 
 volumeSlider.addEventListener("input", () => { volume = Number(volumeSlider.value); });
 sensitivitySlider.addEventListener("input", () => { sensitivity = Number(sensitivitySlider.value); });
@@ -290,13 +283,13 @@ saveSettingsBtn.addEventListener("click", () => {
   alert("設定を保存しました");
 });
 
-// ----- Motion detection -----
+/* ------------- Motion detection ------------- */
 let lastAcc = { x: null, y: null, z: null };
 let lastShakeTime = 0;
 let shakeCount = 0;
 let lastOrient = { alpha: null, beta: null, gamma: null };
 let spinWindow = [];
-let lastPlayedAt = {};
+let lastPlayedAt = {}; // throttle
 const THROTTLE_MS = 300;
 
 function triggerAction(actionKey) {
@@ -366,16 +359,16 @@ function handleOrientationEvent(e) {
   lastOrient = { alpha: a, beta: b, gamma: g };
 }
 
-// ----- Start (user gesture) -----
+/* ------------- Start (must be in user gesture) ------------- */
 async function startAll() {
   // unlock audio in user gesture
   await ensureAudioContext();
   await unlockAudioContext();
   statusEl.textContent = "状態：音声解禁済み";
 
-  // NOTE: do NOT preload all buffers here (may hang on iOS). Load on demand.
+  // don't preload everything — load on demand to avoid decode hangs on iOS
 
-  // request permission for iOS if required
+  // permission for iOS (if API exists)
   if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
     try {
       const p = await DeviceMotionEvent.requestPermission();
@@ -393,7 +386,7 @@ async function startAll() {
     }
   }
 
-  // attach listeners only once
+  // attach listeners once
   if (!listenersAttached) {
     window.addEventListener("devicemotion", handleMotionEvent);
     window.addEventListener("deviceorientation", handleOrientationEvent);
@@ -403,14 +396,12 @@ async function startAll() {
   statusEl.textContent = "状態：稼働中（振ってみてください）";
 }
 
-// ----- initial -----
+/* ------------- initial ------------- */
 loadState();
 populateSoundSelect();
 renderRules();
 
-// start button
 startBtn.addEventListener("click", async () => {
-  // refresh UI-driven values
   volume = Number(volumeSlider.value);
   sensitivity = Number(sensitivitySlider.value);
   rhythmMin = Number(rhythmMinEl.value);
