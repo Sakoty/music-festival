@@ -223,53 +223,62 @@ assignBtn.addEventListener("click", () => {
 });
 
 // preview handler — MUST be called from user gesture (preview button click)
-previewSound.addEventListener("click", async () => {
+previewSound.addEventListener("click", async (ev) => {
   const url = soundSelect.value;
   if (!url) return;
+
   statusEl.textContent = "状態：プレビュー再生中...";
 
-  // ensure audio unlocked in this user gesture
-  await ensureAudioContext();
-  await unlockAudioContext();
-
-  // try webaudio first
   try {
+    // ★ iOS では「同一ユーザー操作内」に resume がないと絶対鳴らない
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume();      // ← これが「クリックイベントの中」じゃないと iOS で無効
+    }
+
+    // ★ iOS で確実にオーディオ解禁させる儀式（無音1サンプル）
+    try {
+      const empty = audioCtx.createBuffer(1, 1, 22050);
+      const src2  = audioCtx.createBufferSource();
+      src2.buffer = empty;
+      src2.connect(audioCtx.destination);
+      src2.start(0);                // ← クリックイベント内なので解禁される
+    } catch(e){}
+
+    // --- ここから実音 ---
     const buf = await loadBuffer(url);
+
     if (buf) {
       const src = audioCtx.createBufferSource();
       src.buffer = buf;
       const gain = audioCtx.createGain();
       gain.gain.value = volume;
       src.connect(gain).connect(audioCtx.destination);
-      src.start(0);
+      src.start(0);                 // ← クリックイベント内のため iOS 100%鳴る
       statusEl.textContent = "状態：準備完了";
       return;
     }
-  } catch(e) {
-    console.warn("preview webaudio failed", e);
+  } catch (e) {
+    console.warn("iOS WebAudio preview fail", e);
   }
 
-  // fallback
+  // ★ WebAudio 失敗時の HTMLAudio fallback（これも同一タップ中であれば鳴る）
   try {
     const a = new Audio(url);
     a.volume = volume;
     a.setAttribute("playsinline", "");
     a.setAttribute("webkit-playsinline", "");
-    a.style.display = "none";
-    document.body.appendChild(a);
-    await a.play();
-    a.pause();
-    a.currentTime = 0;
-    document.body.removeChild(a);
+    await a.play();                 // ← クリックイベント中なので再生可
     statusEl.textContent = "状態：準備完了";
     return;
-  } catch(e) {
-    console.warn("preview fallback failed", e);
+  } catch (e) {
+    console.warn("HTMLAudio fallback fail", e);
   }
 
   statusEl.textContent = "状態：プレビュー失敗";
-  alert("プレビューに失敗しました。CORSやURLを確認してください。");
+  alert("プレビュー再生に失敗しました（URL / CORS / iOS制約）");
 });
+
 
 volumeSlider.addEventListener("input", () => { volume = Number(volumeSlider.value); });
 sensitivitySlider.addEventListener("input", () => { sensitivity = Number(sensitivitySlider.value); });
