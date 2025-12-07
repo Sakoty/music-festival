@@ -1,93 +1,76 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Motion → Sound 設定アプリ</title>
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8" />
+<title>Joy-Con ボタン入力テスト</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
-  <h1>Motion → Sound 設定アプリ</h1>
+<h2>Joy-Con ボタン→効果音テスト</h2>
+<button id="connect">🎮 Joy-Con に接続</button>
+<p id="status">未接続</p>
 
-  <div class="top-row">
-    <button id="startBtn">▶ スタート（必ず押して）</button>
-    <button id="openSettings">⚙ 設定</button>
-  </div>
+<!-- ボタン割当設定 -->
+<div>
+  <h3>ボタン → 再生音</h3>
+  <label>Aボタン：<input id="soundA" type="text" value="soundA.mp3"></label><br>
+  <label>Bボタン：<input id="soundB" type="text" value="soundB.mp3"></label><br>
+  <label>Xボタン：<input id="soundX" type="text" value="soundX.mp3"></label><br>
+  <label>Yボタン：<input id="soundY" type="text" value="soundY.mp3"></label><br>
+</div>
 
-  <div id="status">状態：未開始</div>
+<script>
+let audioCtx;
+let gamepadIndex = null;
+let lastButtons = [];
 
-  <section id="live" class="section">
-    <h2>ライブ</h2>
-    <div class="info-row">
-      <div>振った回数：<span id="count">0</span></div>
-      <div>リズム：<span id="rhythm">-</span></div>
-      <div>傾き：<span id="tilt">-</span></div>
-    </div>
-  </section>
+async function playSound(url) {
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      await audioCtx.resume();
+    }
+    const res = await fetch(url);
+    const buf = await res.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(buf);
 
-  <!-- Settings panel -->
-  <section id="settingsPanel" class="section hidden">
-    <h2>設定（動作 → 音 を割り当て）</h2>
+    const src = audioCtx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(audioCtx.destination);
+    src.start();
+  } catch (e) {
+    console.error("音声エラー", e);
+  }
+}
 
-    <div class="grid">
-      <div>
-        <label>動作を選択</label>
-        <select id="actionSelect">
-          <option value="shake">1. Shake（強く振る）</option>
-          <option value="smallShake">2. Small Shake（弱めの振り）</option>
-          <option value="rhythmShake">3. Rhythm Shake（一定間隔）</option>
-          <option value="tiltRight">4. Tilt Right（右傾け）</option>
-          <option value="tiltLeft">5. Tilt Left（左傾け）</option>
-          <option value="faceUp">6. Face Up（上向き）</option>
-          <option value="faceDown">7. Face Down（下向き）</option>
-          <option value="roll">8. Roll（α回転差）</option>
-          <option value="pitch">9. Pitch（β変化）</option>
-          <option value="spin">10. Spin（高速回転）</option>
-        </select>
-      </div>
+document.getElementById("connect").addEventListener("click", async () => {
+  document.getElementById("status").textContent = "接続待機… (Joy-Con の任意のボタンを押す)";
+});
 
-      <div>
-        <label>効果音を選択</label>
-        <select id="soundSelect"></select>
-        <div style="margin-top:8px">
-          <button id="previewSound">▶ プレビュー</button>
-        </div>
-      </div>
+window.addEventListener("gamepadconnected", (e) => {
+  gamepadIndex = e.gamepad.index;
+  lastButtons = e.gamepad.buttons.map(b => b.pressed);
+  document.getElementById("status").textContent = "Joy-Con 接続成功！ index: " + gamepadIndex;
+  updateLoop();
+});
 
-      <div>
-        <label>カスタム音（URL or data:）</label>
-        <input id="customUrl" type="text" placeholder="https://.../sound.mp3 か data:audio/... を入力" />
-        <button id="addCustom">追加</button>
-      </div>
+function updateLoop() {
+  const gp = navigator.getGamepads()[gamepadIndex];
+  if (!gp) return;
 
-      <div>
-        <label>音量</label>
-        <input id="volume" type="range" min="0" max="1" step="0.01" value="1" />
-      </div>
+  gp.buttons.forEach((btn, i) => {
+    if (btn.pressed && !lastButtons[i]) {
+      // Joy-Con の一般的なボタン番号(A/B/X/Y)
+      if (i === 1) playSound(document.getElementById("soundA").value); // A
+      if (i === 0) playSound(document.getElementById("soundB").value); // B
+      if (i === 3) playSound(document.getElementById("soundX").value); // X
+      if (i === 2) playSound(document.getElementById("soundY").value); // Y
+    }
+  });
 
-      <div>
-        <label>感度（振るしきい値）</label>
-        <input id="sensitivity" type="range" min="8" max="40" step="1" value="20" />
-        <small>小さいほど反応しやすい</small>
-      </div>
-
-      <div>
-        <label>リズム判定間隔（ms）</label>
-        <input id="rhythmMin" type="number" value="300" /> 〜
-        <input id="rhythmMax" type="number" value="600" />
-      </div>
-    </div>
-
-    <div style="margin-top:12px;">
-      <button id="assignBtn">この動作に割り当てる</button>
-      <button id="saveSettings">保存（localStorage）</button>
-      <button id="closeSettings" style="background:#6c757d">閉じる</button>
-    </div>
-
-    <h3>現在のルール</h3>
-    <ul id="rulesList" class="rules"></ul>
-  </section>
-
-  <script src="script.js"></script>
+  lastButtons = gp.buttons.map(btn => btn.pressed);
+  requestAnimationFrame(updateLoop);
+}
+</script>
 </body>
 </html>
