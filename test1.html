@@ -132,104 +132,45 @@ function refreshSoundLists(){ const ul=document.getElementById('soundLists'); ul
 function refreshLearnSoundSelect(){ const sel=document.getElementById('learnSoundSelect'); const val=sel.value; sel.innerHTML=''; for(const k in soundMap){ soundMap[k].forEach((s,i)=>{ const opt=document.createElement('option'); opt.value=k+'|'+i; opt.textContent=s.name+' ('+k+')'; sel.appendChild(opt); }); } if(val) sel.value=val; }
 
 // ===== モーション学習 =====
-let currentLearn=[], isLearning=false, lastTriggeredAt={};
-
-document.getElementById('startLearn').addEventListener('click', () => {
-  if(!audioCtx) initAudioIfNeeded();
-  currentLearn=[];
-  isLearning=true;
-  status('学習中… 3秒');
-  log('学習開始');
-  setTimeout(() => {
-    isLearning=false;
-    status('学習完了');
-    log('学習終了');
-  }, 3000);
-});
-
-document.getElementById('savePattern').addEventListener('click', () => {
-  const name=document.getElementById('patternName').value.trim();
-  if(!name){ alert('名前を入力'); return; }
-  if(currentLearn.length<10){ alert('十分なデータがありません'); return; }
-
-  const sel=document.getElementById('learnSoundSelect');
-  const soundRef=sel.value;
-  if(!soundRef){ alert('音を選択'); return; }
-
-  const [motion, idx]=soundRef.split('|');
-  const buf=soundMap[motion][Number(idx)].buf;
-  const patternData=resample(currentLearn,60);
-
+let currentLearn=[],isLearning=false,lastTriggeredAt={};
+document.getElementById('startLearn').addEventListener('click',()=>{ currentLearn=[]; isLearning=true; status('学習中… 3秒'); setTimeout(()=>{ isLearning=false; status('学習完了'); log('学習終了'); },3000); });
+document.getElementById('savePattern').addEventListener('click',()=>{
+  const name=document.getElementById('patternName').value.trim(); if(!name){ alert('名前入力'); return; }
+  const sel=document.getElementById('learnSoundSelect'); const soundRef=sel.value; if(!soundRef){ alert('音を選択'); return; }
+  const [motion,idx]=soundRef.split('|'); const buf=soundMap[motion][Number(idx)].buf;
   const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  saved.push({name, data: patternData, sound:{motion, idx:Number(idx)}});
-  localStorage.setItem('motionPatterns', JSON.stringify(saved));
-  refreshPatternList();
-  log(`パターン保存: ${name}`);
+  saved.push({name,data:resample(currentLearn,60),sound:{motion,idx:Number(idx)}});
+  localStorage.setItem('motionPatterns',JSON.stringify(saved)); refreshPatternList(); log(`パターン保存: ${name}`);
 });
+document.getElementById('testPattern').addEventListener('click',()=>{
+  const sel=document.getElementById('learnSoundSelect'); const soundRef=sel.value; if(!soundRef){ alert('音を選択'); return; }
+  const [motion,idx]=soundRef.split('|'); playBuffer(soundMap[motion][Number(idx)].buf);
+});
+function refreshPatternList(){ const ul=document.getElementById('patternList'); ul.innerHTML=''; const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]'); saved.forEach((p,i)=>{ const li=document.createElement('li'); li.textContent=p.name; const btn=document.createElement('button'); btn.className='smallbtn'; btn.textContent='▶'; btn.addEventListener('click',()=>playPatternSound(p)); li.appendChild(btn); ul.appendChild(li); }); }
+function playPatternSound(p){ const {motion,idx}=p.sound; playBuffer(soundMap[motion][idx].buf); }
 
-function refreshPatternList(){
-  const ul=document.getElementById('patternList'); ul.innerHTML='';
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  saved.forEach((p,i)=>{
-    const li=document.createElement('li');
-    li.textContent=p.name;
-    const playBtn=document.createElement('button'); playBtn.className='smallbtn'; playBtn.textContent='▶';
-    playBtn.addEventListener('click',()=>playPatternSound(p));
-    li.appendChild(playBtn);
-    ul.appendChild(li);
-  });
-}
+// ===== DTW =====
+function dtwDistance(a,b){ const n=a.length,m=b.length; if(n===0||m===0) return Infinity; const INF=1e9; const D=new Array(n+1).fill(0).map(()=>new Array(m+1).fill(INF)); D[0][0]=0; for(let i=1;i<=n;i++) for(let j=1;j<=m;j++){ const cost=Math.abs(a[i-1]-b[j-1]); D[i][j]=cost+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]); } return D[n][m]/(n+m); }
+function resample(arr,targetLen){ if(arr.length===targetLen) return arr.slice(); if(arr.length===0) return new Array(targetLen).fill(0); const out=new Array(targetLen); for(let i=0;i<targetLen;i++){ const t=i*(arr.length-1)/(targetLen-1); const lo=Math.floor(t),hi=Math.ceil(t); out[i]=lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo); } return out; }
 
-function playPatternSound(p){
-  const {motion, idx}=p.sound;
-  if(soundMap[motion] && soundMap[motion][idx]) playBuffer(soundMap[motion][idx].buf);
-}
+// ===== 可視化 =====
+const viz=document.getElementById('viz'); const vctx=viz.getContext('2d'); let vizBuffer=[];
+window.addEventListener('resize',drawViz);
+function drawViz(){ viz.width=viz.clientWidth*devicePixelRatio; viz.height=viz.clientHeight*devicePixelRatio; vctx.clearRect(0,0,viz.width,viz.height); vctx.fillStyle='#07121a'; vctx.fillRect(0,0,viz.width,viz.height); if(vizBuffer.length===0) return; vctx.lineWidth=2*devicePixelRatio; vctx.strokeStyle='#0bffb3'; vctx.beginPath(); const N=vizBuffer.length; for(let i=0;i<N;i++){ const x=i*viz.width/(N-1); const y=viz.height-(vizBuffer[i]/20)*viz.height; i===0?vctx.moveTo(x,y):vctx.lineTo(x,y); } vctx.stroke(); }
 
-// ===== DeviceMotion 検知 =====
-window.addEventListener('devicemotion', ev=>{
-  const acc=ev.accelerationIncludingGravity||ev.acceleration;
-  if(!acc) return;
-  const ax=acc.x||0, ay=acc.y||0, az=acc.z||0;
-  const total=Math.sqrt(ax*ax+ay*ay+az*az);
-
-  // 学習中は currentLearn に記録
-  if(isLearning) currentLearn.push(total);
-
-  // 可視化
+// ===== DeviceMotion検知 =====
+window.addEventListener('devicemotion',ev=>{
+  const acc=ev.accelerationIncludingGravity||ev.acceleration; if(!acc) return; const ax=acc.x||0,ay=acc.y||0,az=acc.z||0; const total=Math.sqrt(ax*ax+ay*ay+az*az);
   vizBuffer.push(total); if(vizBuffer.length>120) vizBuffer.shift(); drawViz();
-
-  const now=Date.now();
-  const cooldownMs=Number(document.getElementById('cooldown').value);
-  const shakeThreshold=Number(document.getElementById('shakeThresh').value);
-  const matchThresh=Number(document.getElementById('matchThresh').value);
+  if(isLearning) currentLearn.push(total);
+  const now=Date.now(); const cooldownMs=Number(document.getElementById('cooldown').value); const shakeThreshold=Number(document.getElementById('shakeThresh').value); const axisThreshold=Number(document.getElementById('axisThresh').value); const matchThresh=Number(document.getElementById('matchThresh').value);
 
   // 学習パターン判定
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  if(saved.length>0){
-    const candidate=resample(vizBuffer.slice(-240),60);
-    let best=null, bestScore=Infinity;
-    for(const p of saved){
-      const score=dtwDistance(candidate,p.data);
-      if(score<bestScore){ bestScore=score; best=p; }
-    }
-    if(best && bestScore<matchThresh){
-      if(now-(lastTriggeredAt['learned']||0)>cooldownMs){
-        lastTriggeredAt['learned']=now;
-        status(`学習パターン検出: ${best.name}`);
-        playPatternSound(best);
-        log(`学習パターン: ${best.name} トリガー`);
-      }
-    }
-  }
+  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]'); if(saved.length>0){ const candidate=resample(vizBuffer.slice(-240),60); let best=null,bestScore=Infinity; for(const p of saved){ const score=dtwDistance(candidate,p.data); if(score<bestScore){ bestScore=score; best=p; } } if(best && bestScore<matchThresh){ if(now-(lastTriggeredAt['learned']||0)>cooldownMs){ lastTriggeredAt['learned']=now; status(`学習パターン検出:${best.name}`); playPatternSound(best); log(`学習パターン:${best.name}トリガー`); } } }
 
-  // シェイク検知
-  if(total>shakeThreshold && now-(lastTriggeredAt['shake']||0)>cooldownMs){
-    lastTriggeredAt['shake']=now;
-    if(soundMap.shake.length>0) playBuffer(soundMap.shake[Math.floor(Math.random()*soundMap.shake.length)].buf);
-    log('Shake!');
-  }
+  // シェイク判定
+  if(total>shakeThreshold && now-(lastTriggeredAt['shake']||0)>cooldownMs){ lastTriggeredAt['shake']=now; if(soundMap.shake.length>0) playBuffer(soundMap.shake[Math.floor(Math.random()*soundMap.shake.length)].buf); log('Shake!'); }
 });
-
 
 document.getElementById('initBtn').addEventListener('click', async ()=>{
   initAudioIfNeeded();
