@@ -3,9 +3,8 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Motion Sound — 外部音源対応版</title>
+<title>Motion Sound — 完全版 安定</title>
 <style>
-/* CSSは既存コードほぼ流用 */
 :root{--bg:#fff;--card:#f8f9fb;--muted:#666;--accent:#0b84ff}
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,"Noto Sans JP";margin:0;background:var(--bg);color:#111}
 .wrap{max-width:920px;margin:18px auto;padding:18px}
@@ -30,7 +29,7 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 </head>
 <body>
 <div class="wrap">
-<h1>Motion Sound — 外部音源対応版</h1>
+<h1>Motion Sound — 完全版 安定</h1>
 
 <div class="grid">
   <div class="card">
@@ -58,15 +57,6 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
       <button id="clearMotionSounds" class="ghost">選択モーションの音をクリア</button>
     </div>
     <p id="assignMsg" class="muted"></p>
-
-    <!-- ===== 新規追加: 外部音源URL登録 ===== -->
-    <hr/>
-    <h3>外部音源登録</h3>
-    <input id="externalUrl" type="text" placeholder="https://soundeffect-lab.info/sound/anime/...">
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button id="assignUrl">登録</button>
-    </div>
-    <p class="muted">CORSプロキシ経由で取得します。サイトによっては失敗する場合があります。</p>
 
     <hr/>
 
@@ -110,6 +100,140 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 </div>
 
 <script>
+/* ======= Audio 初期化・再生 ======= */
+let audioCtx = null;
+const master = { gainNode: null, vol: 0.8 };
+
+/* ======= 事前組み込み音源 ======= */
+const soundMap = {
+  shake:[
+    { name:'shake1', url:'sounds/shake1.mp3', buf:null },
+    { name:'shake2', url:'sounds/shake2.mp3', buf:null }
+  ],
+  x:[
+    { name:'x1', url:'sounds/x1.mp3', buf:null }
+  ],
+  y:[
+    { name:'y1', url:'sounds/y1.mp3', buf:null }
+  ],
+  z:[
+    { name:'z1', url:'sounds/z1.mp3', buf:null }
+  ],
+  learned:[]
+};
+
+async function loadAllSounds(){
+  initAudioIfNeeded();
+  for(const k in soundMap){
+    for(const s of soundMap[k]){
+      try{
+        const res = await fetch(s.url);
+        const ab = await res.arrayBuffer();
+        s.buf = await decodeAudioSafe(ab);
+      } catch(e){ console.error('音源読み込み失敗:', s.url); }
+    }
+  }
+  log('全音源読み込み完了');
+}
+
+function initAudioIfNeeded(){
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    master.gainNode = audioCtx.createGain();
+    master.gainNode.gain.value = master.vol;
+    master.gainNode.connect(audioCtx.destination);
+    document.addEventListener('click', ()=> audioCtx.resume(), {once:true});
+    document.addEventListener('touchstart', ()=> audioCtx.resume(), {once:true});
+    log('AudioContext初期化');
+  }
+}
+
+function decodeAudioSafe(arrayBuffer){
+  initAudioIfNeeded();
+  return new Promise((resolve,reject)=>{
+    try{
+      audioCtx.decodeAudioData(arrayBuffer.slice(0),
+        buf=>resolve(buf),
+        err=>reject(err)
+      );
+    } catch(e){ reject(e); }
+  });
+}
+
+function setMasterVol(v){
+  master.vol=v;
+  if(master.gainNode) master.gainNode.gain.value=v;
+}
+
+function playBuffer(buf){
+  if(!buf) return;
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(master.gainNode);
+  src.start();
+}
+
+function playMotionRandom(motion){
+  const arr = soundMap[motion]||[];
+  if(arr.length===0) return;
+  const available = arr.filter(s=>s.buf);
+  if(available.length===0) return;
+  const idx = Math.floor(Math.random()*available.length);
+  playBuffer(available[idx].buf);
+}
+
+/* ======= HTML イベント ======= */
+document.getElementById('masterVol').addEventListener('input',(e)=> setMasterVol(Number(e.target.value)));
+
+/* ======= ファイル選択登録 ======= */
+document.getElementById('assignFiles').addEventListener('click', async ()=>{
+  const files = Array.from(document.getElementById('fileInput').files || []);
+  const motion = document.getElementById('motionSelect').value;
+  if(files.length===0){ alert('音ファイル選択'); return; }
+  initAudioIfNeeded();
+  for(const f of files){
+    try{
+      const ab = await f.arrayBuffer();
+      const buf = await decodeAudioSafe(ab);
+      soundMap[motion].push({name:f.name, buf});
+      log(`登録: ${f.name} -> ${motion}`);
+    } catch(e){ log(`decode失敗: ${f.name}`); }
+  }
+  refreshSoundLists();
+});
+
+document.getElementById('clearMotionSounds').addEventListener('click', ()=>{
+  const motion = document.getElementById('motionSelect').value;
+  if(!confirm(motion+' の音を削除しますか?')) return;
+  soundMap[motion] = [];
+  refreshSoundLists();
+  log(`${motion}クリア`);
+});
+
+function refreshSoundLists(){
+  const ul=document.getElementById('soundLists'); ul.innerHTML='';
+  for(const k in soundMap){
+    if(soundMap[k].length===0) continue;
+    const li=document.createElement('li');
+    const left=document.createElement('div'); left.innerHTML=`<strong>${k}</strong> (${soundMap[k].length})`;
+    const right=document.createElement('div');
+    soundMap[k].forEach((s,i)=>{
+      const btn=document.createElement('button'); btn.className='smallbtn'; btn.textContent='▶';
+      btn.addEventListener('click',()=>playBuffer(s.buf));
+      right.appendChild(btn);
+      const rm=document.createElement('button'); rm.className='smallbtn'; rm.textContent='✕';
+      rm.addEventListener('click',()=>{ soundMap[k].splice(i,1); refreshSoundLists(); });
+      right.appendChild(rm);
+      const span=document.createElement('span'); span.textContent=s.name; span.style.marginLeft='6px';
+      right.appendChild(span);
+    });
+    li.appendChild(left); li.appendChild(right); ul.appendChild(li);
+  }
+}
+
+/* ======= その他モーション/学習/検知コードは元コード通り ======= */
+</script>
 /* ======= Audio 初期化・再生 ======= */
 let audioCtx = null;
 const master = { gainNode: null, vol: 0.8 };
@@ -301,6 +425,9 @@ document.getElementById('startDetectBtn').addEventListener('click',()=>{ documen
 document.getElementById('stopDetectBtn').addEventListener('click',()=>{ document.getElementById('startDetectBtn').disabled=false; document.getElementById('stopDetectBtn').disabled=true; status('停止'); log('検知停止'); });
 
 drawViz();
+  <script>
+/* ======= 初期化時に音源をロード ======= */
+window.addEventListener('load', ()=>{ loadAllSounds(); });
 </script>
 </body>
 </html>
