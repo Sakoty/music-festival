@@ -61,10 +61,9 @@ let detecting = false;
 let motionHistory = [];
 
 // ログ表示
-function log(t){
-  const box = document.getElementById('log');
-  box.innerHTML += t + '<br>';
-  box.scrollTop = box.scrollHeight;
+function log(msg){
+  document.getElementById('log').textContent += msg + "
+";
 }
 
 // 音追加
