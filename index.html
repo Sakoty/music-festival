@@ -1,28 +1,6 @@
-<button id="perm">動作センサーを許可</button>
-<p id="status"></p>
-
 <script>
-document.getElementById("perm").addEventListener("click", async () => {
-
-  // iPhone 以外は許可不要
-  if (typeof DeviceMotionEvent.requestPermission !== "function") {
-    document.getElementById("status").textContent =
-      "iPhone以外なので許可は不要です";
-    return;
-  }
-
-  try {
-    // 🔥 Safari が唯一許可する呼び出し位置
-    const state = await DeviceMotionEvent.requestPermission();
-
-    if (state === "granted") {
-      document.getElementById("status").textContent = "✔ 許可されました";
-    } else {
-      document.getElementById("status").textContent = "❌ 拒否されました";
-    }
-  } catch (e) {
-    document.getElementById("status").textContent = "エラー：" + e;
-  }
+window.addEventListener("devicemotion", e => {
+  document.body.style.background = "#d0ffd0"; // 緑に光る
 });
 </script>
 
