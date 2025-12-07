@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion Permission Test</title>
+</head>
+<body>
+<h1>動きセンサー Permission Test</h1>
+
+<button id="btn">動きセンサーを有効化</button>
+
+<div id="log" style="margin-top:20px;"></div>
+
+<script>
+const log = msg => document.getElementById("log").innerHTML += msg + "<br>";
+
+document.getElementById("btn").addEventListener("click", async () => {
+  log("ボタンが押されました。");
+
+  // iOS Safari 専用の許可 API があるかチェック
+  if (typeof DeviceMotionEvent !== "undefined" &&
+      typeof DeviceMotionEvent.requestPermission === "function") {
+
+    log("iOS Safari です。許可ダイアログを表示します…");
+
+    try {
+      const permission = await DeviceMotionEvent.requestPermission();
+      log("結果: " + permission);
+
+      if (permission === "granted") {
+        window.addEventListener("devicemotion", (e) => {
+          log("加速度: " + JSON.stringify({
+            x: e.acceleration.x,
+            y: e.acceleration.y,
+            z: e.acceleration.z
+          }));
+        });
+      }
+    } catch (err) {
+      log("エラー: " + err);
+    }
+
+  } else {
+    log("iOS Safari ではないため、許可ダイアログは不要です。");
+
+    window.addEventListener("devicemotion", (e) => {
+      log("加速度: " + JSON.stringify({
+        x: e.acceleration.x,
+        y: e.acceleration.y,
+        z: e.acceleration.z
+      }));
+    });
+  }
+});
+</script>
+
+</body>
+</html>
