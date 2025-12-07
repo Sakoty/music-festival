@@ -1,187 +1,181 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Motion → Sound（学習・保存対応）</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Motion → Sound 設定アプリ (完全版)</title>
   <style>
     body { font-family: sans-serif; padding: 20px; }
-    .box { border: 1px solid #ccc; padding: 16px; border-radius: 12px; margin-bottom: 20px; }
-    label { display: block; margin-top: 10px; font-weight: bold; }
-    input, select, button { margin-top: 4px; }
-    #log { white-space: pre-wrap; background: #f5f5f5; padding: 10px; border-radius: 8px; }
+    h1 { font-size: 26px; }
+    .block { border: 1px solid #ccc; padding: 15px; margin: 15px 0; border-radius: 10px; }
+    input[type="range"] { width: 200px; }
   </style>
 </head>
 <body>
-  <h1>Motion → Sound（任意動作の学習・音追加・パターン保存）</h1>
+  <h1>Motion → Sound 設定アプリ（完全版）</h1>
 
-  <div class="box">
-    <h2>1. 音ファイルの追加</h2>
+  <!-- 1. 音の追加 -->
+  <div class="block">
+    <h2>1. 音ファイルを追加</h2>
     <input type="file" id="soundFile" accept="audio/*" />
-    <button id="addSoundBtn">音を登録</button>
-    <p>登録された音: <span id="soundCount">0</span></p>
+    <button id="addSound">追加</button>
+    <p>現在登録されている音：</p>
+    <ul id="soundList"></ul>
   </div>
 
-  <div class="box">
-    <h2>2. 動作の学習（iPhoneモーション）</h2>
+  <!-- 2. モーション学習 -->
+  <div class="block">
+    <h2>2. モーションを学習</h2>
     <button id="startLearn">学習開始</button>
-    <button id="stopLearn">学習停止</button>
-    <p>現在の学習中パターン名: <input id="patternName" placeholder="例: 振る・ねじる" /></p>
+    <button id="stopLearn">停止</button>
+    <p>→ 学習したモーションは自動保存されます。</p>
+    <ul id="patternList"></ul>
   </div>
 
-  <div class="box">
-    <h2>3. 動作パターン一覧（保存対応）</h2>
-    <select id="patternList"></select>
-    <button id="deletePattern">削除</button>
+  <!-- 3. 感度設定 -->
+  <div class="block">
+    <h2>3. モーション検知感度</h2>
+    <label>
+      感度（小さいほど敏感）
+      <input type="range" id="sensitivity" min="5" max="100" value="30" />
+    </label>
   </div>
 
-  <div class="box">
+  <!-- 4. 検知開始 -->
+  <div class="block">
     <h2>4. 検知開始</h2>
-<label>モーション検知感度（数値が小さいほど敏感）
-  <input type="range" id="sensitivity" min="5" max="100" value="30" />
-</label>
-<button id="startDetect">検知スタート</button>
-<button id="stopDetect">停止</button>
-</div>
+    <button id="startDetect">検知スタート</button>
+    <button id="stopDetect">停止</button>
+  </div>
 
-  <div class="box">
+  <div class="block">
     <h2>ログ</h2>
-    <div id="log"></div>
+    <div id="log" style="height:150px; overflow:auto; background:#f5f5f5; padding:10px;"></div>
   </div>
 
 <script>
-let sounds = [];        // 登録された音
-let learnedPatterns = {}; // 保存された動作パターン
-let currentLearning = []; // 今記録中のモーション
-let isLearning = false;
-let isDetecting = false;
-let lastMotion = null;
+let sounds = []; // 登録した音
+let patterns = []; // 学習したモーション
+let learning = false;
+let detecting = false;
+let motionHistory = [];
 
-// ロード（localStorage）
-window.onload = () => {
-  const saved = localStorage.getItem('motionPatterns');
-  if (saved) learnedPatterns = JSON.parse(saved);
-  refreshPatternList();
-};
-
-function log(msg){
-  document.getElementById('log').textContent += msg + "
-";
+// ログ表示
+function log(t){
+  const box = document.getElementById('log');
+  box.innerHTML += t + '<br>';
+  box.scrollTop = box.scrollHeight;
 }
 
-// 1. 音追加 ---------------------------------------
-document.getElementById('addSoundBtn').onclick = () => {
-  const file = document.getElementById('soundFile').files[0];
-  if (!file) return alert('音ファイルを選んでください');
+// 音追加
+addSound.onclick = () => {
+  const f = soundFile.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  sounds.push(new Audio(url));
 
-  const url = URL.createObjectURL(file);
-  const audio = new Audio(url);
-  sounds.push(audio);
-  document.getElementById('soundCount').textContent = sounds.length;
-  log('音を登録しました');
+  const li = document.createElement('li');
+  li.textContent = f.name;
+  soundList.appendChild(li);
 };
 
+// モーション記録
+window.addEventListener('devicemotion', (e) => {
+  if (!learning && !detecting) return;
+  const { x, y, z } = e.accelerationIncludingGravity;
+  motionHistory.push({ x, y, z, t: Date.now() });
+  if (motionHistory.length > 50) motionHistory.shift();
+});
+
+// モーション学習開始\ nstartLearn.onclick = () => {
+  learning = true;
+  motionHistory = [];
+  log('学習スタート');
+};
+
+// 学習停止\ nstopLearn.onclick = () => {
+  learning = false;
+  if (motionHistory.length > 10){
+    patterns.push([...motionHistory]);
+    savePatterns();
+    log('モーション保存しました');
+    renderPatterns();
+  }
+};
+
+// パターン保存（ローカル）
+function savePatterns(){
+  localStorage.setItem('motionPatterns', JSON.stringify(patterns));
+}
+function loadPatterns(){
+  const p = localStorage.getItem('motionPatterns');
+  if (p) patterns = JSON.parse(p);
+}
+function renderPatterns(){
+  patternList.innerHTML = '';
+  patterns.forEach((p,i)=>{
+    const li = document.createElement('li');
+    li.textContent = 'パターン ' + (i+1) + '（' + p.length + ' 点）';
+    patternList.appendChild(li);
+  });
+}
+
+// 類似度計算（ざっくり）
+function scorePattern(pat){
+  let sum = 0;
+  const len = Math.min(pat.length, motionHistory.length);
+  for (let i=0;i<len;i++){
+    const a = pat[i];
+    const b = motionHistory[motionHistory.length-len+i];
+    const d = Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2 + (a.z-b.z)**2);
+    sum += d;
+  }
+  return sum / len;
+}
+
+// 全登録音を重ねて鳴らす
 function playSound(){
   if (sounds.length === 0) return;
-  // すべての音を同時に鳴らす
-  sounds.forEach(a => {
-    const s = new Audio(a.src);
+  sounds.forEach(o => {
+    const s = new Audio(o.src);
     s.currentTime = 0;
     s.play();
   });
 }
 
-// 2. 動作の学習 ---------------------------------------
-document.getElementById('startLearn').onclick = () => {
-  currentLearning = [];
-  isLearning = true;
-  log('学習開始');
-};
-
-document.getElementById('stopLearn').onclick = () => {
-  if (!isLearning) return;
-  isLearning = false;
-
-  const name = document.getElementById('patternName').value;
-  if (!name) return alert('パターン名を入れてください');
-
-  learnedPatterns[name] = currentLearning;
-  localStorage.setItem('motionPatterns', JSON.stringify(learnedPatterns));
-  refreshPatternList();
-  log('学習終了: ' + name);
-};
-
-// 3. パターン一覧 ---------------------------------------
-function refreshPatternList(){
-  const list = document.getElementById('patternList');
-  list.innerHTML = '';
-  Object.keys(learnedPatterns).forEach(name => {
-    const op = document.createElement('option');
-    op.value = name;
-    op.textContent = name;
-    list.appendChild(op);
-  });
-}
-
-document.getElementById('deletePattern').onclick = () => {
-  const list = document.getElementById('patternList');
-  const name = list.value;
-  if (!name) return;
-  delete learnedPatterns[name];
-  localStorage.setItem('motionPatterns', JSON.stringify(learnedPatterns));
-  refreshPatternList();
-  log('削除: ' + name);
-};
-
-// 4. iPhoneモーション検知 ---------------------------------------
-window.addEventListener('deviceorientation', (e)=>{
-  const data = { alpha:e.alpha, beta:e.beta, gamma:e.gamma, t:Date.now() };
-
-  if (isLearning) {
-    currentLearning.push(data);
-  }
-
-  if (isDetecting) {
-    detectMotion(data);
-  }
-});
-
-function detectMotion(current){
-  let best = null;
-  let bestScore = 999999;
-
-  Object.keys(learnedPatterns).forEach(name => {
-    const pattern = learnedPatterns[name];
-    if (pattern.length === 0) return;
-
-    const dx = current.alpha - pattern[0].alpha;
-    const dy = current.beta - pattern[0].beta;
-    const dz = current.gamma - pattern[0].gamma;
-
-    const score = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-
-    if (score < bestScore) {
-      bestScore = score;
-      best = name;
-    }
-  });
-
-  const threshold = Number(document.getElementById('sensitivity').value);
-  if (best && bestScore < threshold) { // 閾値
-    log('検知: ' + best);
-    playSound();
-  }
-}
-
-document.getElementById('startDetect').onclick = ()=>{
-  isDetecting = true;
+// 検知開始
+startDetect.onclick = () => {
+  detecting = true;
   log('検知開始');
 };
 
-document.getElementById('stopDetect').onclick = ()=>{
-  isDetecting = false;
-  log('検知停止');
+stopDetect.onclick = () => {
+  detecting = false;
+  log('停止');
 };
+
+// 実際の判定処理\ nsetInterval(() => {
+  if (!detecting || patterns.length === 0) return;
+
+  let best = null;
+  let bestScore = Infinity;
+
+  patterns.forEach(p => {
+    const s = scorePattern(p);
+    if (s < bestScore){ bestScore = s; best = p; }
+  });
+
+  const threshold = Number(document.getElementById('sensitivity').value);
+
+  if (best && bestScore < threshold){
+    log('検知: スコア ' + bestScore.toFixed(1));
+    playSound();
+  }
+}, 200);
+
+// 起動時に読み込み\ nloadPatterns();
+renderPatterns();
 </script>
+
 </body>
 </html>
