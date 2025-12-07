@@ -3,9 +3,8 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Motion Sound — 完全版 安定修正版</title>
+<title>Motion Sound — 完全統合版</title>
 <style>
-/* CSSは元コードをほぼ流用 */
 :root{--bg:#fff;--card:#f8f9fb;--muted:#666;--accent:#0b84ff}
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,"Noto Sans JP";margin:0;background:var(--bg);color:#111}
 .wrap{max-width:920px;margin:18px auto;padding:18px}
@@ -30,8 +29,7 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 </head>
 <body>
 <div class="wrap">
-<h1>Motion Sound — 完全版 安定修正版</h1>
-
+<h1>Motion Sound — 完全統合版</h1>
 <div class="grid">
   <div class="card">
     <h3>準備 & 許可</h3>
@@ -44,8 +42,11 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 
     <hr/>
 
-    <h3>音ファイル（複数可）</h3>
+    <h3>音ファイル（複数可 / ローカル）</h3>
     <input id="fileInput" type="file" accept="audio/*" multiple>
+    <label>外部音源URL<input id="urlInput" type="text" placeholder="例: https://.../sound.mp3"></label>
+    <button id="addUrlBtn">URL登録</button>
+
     <select id="motionSelect">
       <option value="shake">強いシェイク</option>
       <option value="x">左右(X)</option>
@@ -77,10 +78,13 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 
     <h3>モーション学習</h3>
     <label>パターン名 <input id="patternName" type="text" placeholder="例: 2回縦に振る"></label>
+    <label>学習パターン用の音 
+      <select id="learnSoundSelect"></select>
+    </label>
     <div style="display:flex;gap:8px">
       <button id="startLearn">学習開始（3秒）</button>
       <button id="savePattern" class="ghost">保存</button>
-      <button id="testPattern" class="ghost">テスト</button>
+      <button id="testPattern" class="ghost">テスト再生</button>
     </div>
 
     <hr/>
@@ -101,250 +105,83 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 </div>
 
 <script>
-/* =====================
-  修正点まとめ
-  1. decodeAudioData 安定化 + Audioタグフォールバック追加
-  2. モーション学習 currentLearn 管理を修正
-  3. DeviceMotion 検知と cooldown 安定化
-  4. Canvas 可視化描画を安定化
-===================== */
-
-let audioCtx = null;
-const master = { gainNode: null, vol: 0.8 };
-const soundMap = { shake:[], x:[], y:[], z:[], learned:[] };
-
-function log(txt){ 
-  const t=new Date().toLocaleTimeString(); 
-  document.getElementById('log').innerText=`[${t}] ${txt}\n`+document.getElementById('log').innerText;
-}
-function status(txt){ document.getElementById('status').innerText='ステータス: '+txt; }
-
-function initAudioIfNeeded(){
-  if(!audioCtx){
-    audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-    master.gainNode=audioCtx.createGain();
-    master.gainNode.gain.value=master.vol;
-    master.gainNode.connect(audioCtx.destination);
-    document.addEventListener('click',()=>audioCtx.resume(),{once:true});
-    document.addEventListener('touchstart',()=>audioCtx.resume(),{once:true});
-    log('AudioContext初期化');
-  }
-}
-
+// ===== Audio 初期化・再生 =====
+let audioCtx=null; const master={gainNode:null,vol:0.8}; const soundMap={shake:[],x:[],y:[],z:[],learned:[]};
+function initAudioIfNeeded(){ if(!audioCtx){ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); master.gainNode=audioCtx.createGain(); master.gainNode.gain.value=master.vol; master.gainNode.connect(audioCtx.destination); document.addEventListener('click',()=>audioCtx.resume(),{once:true}); document.addEventListener('touchstart',()=>audioCtx.resume(),{once:true}); log('AudioContext初期化'); } }
 function setMasterVol(v){ master.vol=v; if(master.gainNode) master.gainNode.gain.value=v; }
-document.getElementById('masterVol').addEventListener('input',e=>setMasterVol(Number(e.target.value)));
+function playBuffer(buf){ if(!buf) return; if(audioCtx.state==='suspended') audioCtx.resume(); const src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(master.gainNode); src.start(); }
+function decodeAudioSafe(arrayBuffer){ initAudioIfNeeded(); return new Promise((res,rej)=>{ try{ audioCtx.decodeAudioData(arrayBuffer.slice(0),b=>res(b),e=>rej(e)); } catch(e){ rej(e); } }); }
 
-/* -----------------------------
-   decodeAudioData 安全化
-   フォールバック対応追加
------------------------------ */
-async function decodeAudioSafe(ab){
-  initAudioIfNeeded();
-  try{
-    return await audioCtx.decodeAudioData(ab.slice(0));
-  }catch(err){
-    log('decode失敗, Audioタグフォールバック');
-    return { fallback:true, arrayBuffer:ab };
-  }
-}
-
-function playBuffer(buf){
-  if(!buf) return;
-  if(buf.fallback){
-    const blob=new Blob([buf.arrayBuffer],{type:'audio/mpeg'});
-    const url=URL.createObjectURL(blob);
-    const audio=new Audio(url); audio.volume=master.vol; audio.play().finally(()=>URL.revokeObjectURL(url));
-    return;
-  }
-  if(audioCtx.state==='suspended') audioCtx.resume();
-  const src=audioCtx.createBufferSource();
-  src.buffer=buf; src.connect(master.gainNode); src.start();
-}
-
-/* -----------------------------
-   音登録処理
------------------------------ */
-document.getElementById('assignFiles').addEventListener('click',async ()=>{
-  const files=Array.from(document.getElementById('fileInput').files||[]);
-  const motion=document.getElementById('motionSelect').value;
-  if(files.length===0){ alert('音ファイル選択'); return; }
-  for(const f of files){
-    try{
-      const ab=await f.arrayBuffer();
-      const buf=await decodeAudioSafe(ab);
-      soundMap[motion].push({name:f.name, buf});
-      log(`登録: ${f.name} -> ${motion}`);
-    }catch(e){ log(`decode失敗: ${f.name}`); }
-  }
-  refreshSoundLists();
+// ===== 音登録 =====
+document.getElementById('assignFiles').addEventListener('click',async()=>{
+  const files=Array.from(document.getElementById('fileInput').files||[]); const motion=document.getElementById('motionSelect').value;
+  if(files.length===0){ alert('音ファイル選択'); return; } initAudioIfNeeded();
+  for(const f of files){ try{ const ab=await f.arrayBuffer(); const buf=await decodeAudioSafe(ab); soundMap[motion].push({name:f.name,buf}); log(`登録: ${f.name} -> ${motion}`); } catch(e){ log(`decode失敗: ${f.name}`); } }
+  refreshSoundLists(); refreshLearnSoundSelect();
 });
-
-document.getElementById('clearMotionSounds').addEventListener('click',()=>{
-  const motion=document.getElementById('motionSelect').value;
-  if(!confirm(motion+' の音を削除しますか?')) return;
-  soundMap[motion]=[];
-  refreshSoundLists();
-  log(`${motion}クリア`);
+document.getElementById('addUrlBtn').addEventListener('click',async()=>{
+  const url=document.getElementById('urlInput').value.trim(); const motion=document.getElementById('motionSelect').value;
+  if(!url){ alert('URL入力'); return; } initAudioIfNeeded();
+  try{ const res=await fetch(url); const ab=await res.arrayBuffer(); const buf=await decodeAudioSafe(ab); const name=url.split('/').pop(); soundMap[motion].push({name,buf}); log(`外部URL登録: ${name} -> ${motion}`); } catch(e){ log(`URL登録失敗: ${url}`); }
+  refreshSoundLists(); refreshLearnSoundSelect();
 });
+document.getElementById('clearMotionSounds').addEventListener('click',()=>{ const motion=document.getElementById('motionSelect').value; if(!confirm(motion+' の音を削除しますか?')) return; soundMap[motion]=[]; refreshSoundLists(); refreshLearnSoundSelect(); log(`${motion}クリア`); });
 
-function refreshSoundLists(){
-  const ul=document.getElementById('soundLists'); ul.innerHTML='';
-  for(const k in soundMap){
-    if(soundMap[k].length===0) continue;
-    const li=document.createElement('li');
-    const left=document.createElement('div'); left.innerHTML=`<strong>${k}</strong> (${soundMap[k].length})`;
-    const right=document.createElement('div');
-    soundMap[k].forEach((s,i)=>{
-      const btn=document.createElement('button'); btn.className='smallbtn'; btn.textContent='▶';
-      btn.addEventListener('click',()=>playBuffer(s.buf));
-      right.appendChild(btn);
-      const rm=document.createElement('button'); rm.className='smallbtn'; rm.textContent='✕';
-      rm.addEventListener('click',()=>{ soundMap[k].splice(i,1); refreshSoundLists(); });
-      right.appendChild(rm);
-      const span=document.createElement('span'); span.textContent=s.name; span.style.marginLeft='6px';
-      right.appendChild(span);
-    });
-    li.appendChild(left); li.appendChild(right); ul.appendChild(li);
-  }
-}
+// ===== サウンドリスト更新 =====
+function refreshSoundLists(){ const ul=document.getElementById('soundLists'); ul.innerHTML=''; for(const k in soundMap){ if(soundMap[k].length===0) continue; const li=document.createElement('li'); const left=document.createElement('div'); left.innerHTML=`<strong>${k}</strong> (${soundMap[k].length})`; const right=document.createElement('div'); soundMap[k].forEach((s,i)=>{ const btn=document.createElement('button'); btn.className='smallbtn'; btn.textContent='▶'; btn.addEventListener('click',()=>playBuffer(s.buf)); right.appendChild(btn); const rm=document.createElement('button'); rm.className='smallbtn'; rm.textContent='✕'; rm.addEventListener('click',()=>{ soundMap[k].splice(i,1); refreshSoundLists(); refreshLearnSoundSelect(); }); right.appendChild(rm); const span=document.createElement('span'); span.textContent=s.name; span.style.marginLeft='6px'; right.appendChild(span); }); li.appendChild(left); li.appendChild(right); ul.appendChild(li); } }
+function refreshLearnSoundSelect(){ const sel=document.getElementById('learnSoundSelect'); const val=sel.value; sel.innerHTML=''; for(const k in soundMap){ soundMap[k].forEach((s,i)=>{ const opt=document.createElement('option'); opt.value=k+'|'+i; opt.textContent=s.name+' ('+k+')'; sel.appendChild(opt); }); } if(val) sel.value=val; }
 
-function playMotionRandom(motion){
-  const arr=soundMap[motion]||[];
-  if(arr.length===0) return;
-  const idx=Math.floor(Math.random()*arr.length);
-  playBuffer(arr[idx].buf);
-}
-
-/* -----------------------------
-   モーション学習処理
------------------------------ */
-let currentLearn=[], isLearning=false, learnBuffer=[], lastTriggeredAt={};
-
-document.getElementById('startLearn').addEventListener('click',()=>{
-  currentLearn=[]; isLearning=true;
-  status('学習中… 3秒');
-  setTimeout(()=>{
-    isLearning=false;
-    status('学習完了');
-    log(`学習データ: ${currentLearn.length}点`);
-  },3000);
-});
-
-/* DTW距離（1D） */
-function dtwDistance(a,b){
-  const n=a.length,m=b.length;
-  if(n===0||m===0) return Infinity;
-  const INF=1e9;
-  const D=new Array(n+1).fill(0).map(()=>new Array(m+1).fill(INF));
-  D[0][0]=0;
-  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++){
-    const cost=Math.abs(a[i-1]-b[j-1]);
-    D[i][j]=cost+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
-  }
-  return D[n][m]/(n+m);
-}
-
-function resample(arr,targetLen){
-  if(arr.length===targetLen) return arr.slice();
-  if(arr.length===0) return new Array(targetLen).fill(0);
-  const out=new Array(targetLen);
-  for(let i=0;i<targetLen;i++){
-    const t=i*(arr.length-1)/(targetLen-1);
-    const lo=Math.floor(t), hi=Math.ceil(t);
-    out[i]=lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo);
-  }
-  return out;
-}
-
-/* -----------------------------
-   DeviceMotion検知 & 冷却
------------------------------ */
-const viz=document.getElementById('viz'); const vctx=viz.getContext('2d'); let vizBuffer=[];
-window.addEventListener('resize',()=>drawViz());
-function drawViz(){
-  viz.width=viz.clientWidth*devicePixelRatio; viz.height=viz.clientHeight*devicePixelRatio;
-  vctx.clearRect(0,0,viz.width,viz.height);
-  vctx.fillStyle='#07121a'; vctx.fillRect(0,0,viz.width,viz.height);
-  if(vizBuffer.length===0) return;
-  vctx.lineWidth=2*devicePixelRatio; vctx.strokeStyle='#0bffb3'; vctx.beginPath();
-  const N=vizBuffer.length;
-  for(let i=0;i<N;i++){
-    const x=i*viz.width/(N-1);
-    const y=viz.height-(vizBuffer[i]/20)*viz.height;
-    i===0?vctx.moveTo(x,y):vctx.lineTo(x,y);
-  }
-  vctx.stroke();
-}
-
-window.addEventListener('devicemotion',(ev)=>{
-  const acc=ev.accelerationIncludingGravity||ev.acceleration;
-  if(!acc) return;
-  const ax=acc.x||0, ay=acc.y||0, az=acc.z||0;
-  const total=Math.sqrt(ax*ax+ay*ay+az*az);
-  vizBuffer.push(total); if(vizBuffer.length>120) vizBuffer.shift(); drawViz();
-
-  if(isLearning) currentLearn.push(total);
-  learnBuffer.push(total); if(learnBuffer.length>800) learnBuffer.shift();
-
-  if(document.getElementById('startDetectBtn').disabled===false) return;
-
-  const now=Date.now();
-  const cooldownMs=Number(document.getElementById('cooldown').value);
-  const shakeThreshold=Number(document.getElementById('shakeThresh').value);
-  const axisThreshold=Number(document.getElementById('axisThresh').value);
-  const matchThresh=Number(document.getElementById('matchThresh').value);
-
-  /* 学習パターン判定 */
+// ===== モーション学習 =====
+let currentLearn=[],isLearning=false,lastTriggeredAt={};
+document.getElementById('startLearn').addEventListener('click',()=>{ currentLearn=[]; isLearning=true; status('学習中… 3秒'); setTimeout(()=>{ isLearning=false; status('学習完了'); log('学習終了'); },3000); });
+document.getElementById('savePattern').addEventListener('click',()=>{
+  const name=document.getElementById('patternName').value.trim(); if(!name){ alert('名前入力'); return; }
+  const sel=document.getElementById('learnSoundSelect'); const soundRef=sel.value; if(!soundRef){ alert('音を選択'); return; }
+  const [motion,idx]=soundRef.split('|'); const buf=soundMap[motion][Number(idx)].buf;
   const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  if(saved.length>0){
-    const candidate=resample(learnBuffer.slice(-240),60);
-    let best=null, bestScore=Infinity;
-    for(const p of saved){ const score=dtwDistance(candidate,p.data); if(score<bestScore){bestScore=score; best=p;} }
-    if(best && bestScore<matchThresh){
-      if(now-(lastTriggeredAt['learned']||0)>cooldownMs){
-        lastTriggeredAt['learned']=now;
-        status(`学習パターン検出:${best.name}`); playMotionRandom('learned'); log(`学習パターン:${best.name}トリガー`);
-      }
-    }
-  }
+  saved.push({name,data:resample(currentLearn,60),sound:{motion,idx:Number(idx)}});
+  localStorage.setItem('motionPatterns',JSON.stringify(saved)); refreshPatternList(); log(`パターン保存: ${name}`);
+});
+document.getElementById('testPattern').addEventListener('click',()=>{
+  const sel=document.getElementById('learnSoundSelect'); const soundRef=sel.value; if(!soundRef){ alert('音を選択'); return; }
+  const [motion,idx]=soundRef.split('|'); playBuffer(soundMap[motion][Number(idx)].buf);
+});
+function refreshPatternList(){ const ul=document.getElementById('patternList'); ul.innerHTML=''; const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]'); saved.forEach((p,i)=>{ const li=document.createElement('li'); li.textContent=p.name; const btn=document.createElement('button'); btn.className='smallbtn'; btn.textContent='▶'; btn.addEventListener('click',()=>playPatternSound(p)); li.appendChild(btn); ul.appendChild(li); }); }
+function playPatternSound(p){ const {motion,idx}=p.sound; playBuffer(soundMap[motion][idx].buf); }
 
-  /* シェイク */
-  if(total>shakeThreshold && now-(lastTriggeredAt['shake']||0)>cooldownMs){
-    lastTriggeredAt['shake']=now; status('シェイク検出'); playMotionRandom('shake'); log('シェイクトリガー');
-  }
-  /* 軸判定 */
-  if(Math.abs(ax)>axisThreshold && now-(lastTriggeredAt['x']||0)>cooldownMs){ lastTriggeredAt['x']=now; status('X軸動作'); playMotionRandom('x'); }
-  if(Math.abs(ay)>axisThreshold && now-(lastTriggeredAt['y']||0)>cooldownMs){ lastTriggeredAt['y']=now; status('Y軸動作'); playMotionRandom('y'); }
-  if(Math.abs(az)>axisThreshold && now-(lastTriggeredAt['z']||0)>cooldownMs){ lastTriggeredAt['z']=now; status('Z軸動作'); playMotionRandom('z'); }
+// ===== DTW =====
+function dtwDistance(a,b){ const n=a.length,m=b.length; if(n===0||m===0) return Infinity; const INF=1e9; const D=new Array(n+1).fill(0).map(()=>new Array(m+1).fill(INF)); D[0][0]=0; for(let i=1;i<=n;i++) for(let j=1;j<=m;j++){ const cost=Math.abs(a[i-1]-b[j-1]); D[i][j]=cost+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]); } return D[n][m]/(n+m); }
+function resample(arr,targetLen){ if(arr.length===targetLen) return arr.slice(); if(arr.length===0) return new Array(targetLen).fill(0); const out=new Array(targetLen); for(let i=0;i<targetLen;i++){ const t=i*(arr.length-1)/(targetLen-1); const lo=Math.floor(t),hi=Math.ceil(t); out[i]=lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo); } return out; }
+
+// ===== 可視化 =====
+const viz=document.getElementById('viz'); const vctx=viz.getContext('2d'); let vizBuffer=[];
+window.addEventListener('resize',drawViz);
+function drawViz(){ viz.width=viz.clientWidth*devicePixelRatio; viz.height=viz.clientHeight*devicePixelRatio; vctx.clearRect(0,0,viz.width,viz.height); vctx.fillStyle='#07121a'; vctx.fillRect(0,0,viz.width,viz.height); if(vizBuffer.length===0) return; vctx.lineWidth=2*devicePixelRatio; vctx.strokeStyle='#0bffb3'; vctx.beginPath(); const N=vizBuffer.length; for(let i=0;i<N;i++){ const x=i*viz.width/(N-1); const y=viz.height-(vizBuffer[i]/20)*viz.height; i===0?vctx.moveTo(x,y):vctx.lineTo(x,y); } vctx.stroke(); }
+
+// ===== DeviceMotion検知 =====
+window.addEventListener('devicemotion',ev=>{
+  const acc=ev.accelerationIncludingGravity||ev.acceleration; if(!acc) return; const ax=acc.x||0,ay=acc.y||0,az=acc.z||0; const total=Math.sqrt(ax*ax+ay*ay+az*az);
+  vizBuffer.push(total); if(vizBuffer.length>120) vizBuffer.shift(); drawViz();
+  if(isLearning) currentLearn.push(total);
+  const now=Date.now(); const cooldownMs=Number(document.getElementById('cooldown').value); const shakeThreshold=Number(document.getElementById('shakeThresh').value); const axisThreshold=Number(document.getElementById('axisThresh').value); const matchThresh=Number(document.getElementById('matchThresh').value);
+
+  // 学習パターン判定
+  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]'); if(saved.length>0){ const candidate=resample(vizBuffer.slice(-240),60); let best=null,bestScore=Infinity; for(const p of saved){ const score=dtwDistance(candidate,p.data); if(score<bestScore){ bestScore=score; best=p; } } if(best && bestScore<matchThresh){ if(now-(lastTriggeredAt['learned']||0)>cooldownMs){ lastTriggeredAt['learned']=now; status(`学習パターン検出:${best.name}`); playPatternSound(best); log(`学習パターン:${best.name}トリガー`); } } }
+
+  // シェイク判定
+  if(total>shakeThreshold && now-(lastTriggeredAt['shake']||0)>cooldownMs){ lastTriggeredAt['shake']=now; if(soundMap.shake.length>0) playBuffer(soundMap.shake[Math.floor(Math.random()*soundMap.shake.length)].buf); log('Shake!'); }
 });
 
-/* -----------------------------
-   初期化・許可ボタン
------------------------------ */
 document.getElementById('initBtn').addEventListener('click', async ()=>{
   initAudioIfNeeded();
   if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){
-    try{
-      const res=await DeviceMotionEvent.requestPermission();
-      if(res==='granted'){ status('センサー許可: granted'); document.getElementById('startDetectBtn').disabled=false; log('Motion granted'); }
-      else{ status('センサー許可: denied'); alert('許可が必要'); log('Motion denied'); }
-    }catch(e){ alert('許可失敗'); log('requestPermission error'); }
+    try{ const res=await DeviceMotionEvent.requestPermission(); if(res==='granted'){ status('センサー許可: granted'); document.getElementById('startDetectBtn').disabled=false; log('Motion granted'); } else{ status('センサー許可: denied'); alert('許可が必要'); log('Motion denied'); } } catch(e){ alert('許可失敗'); log('requestPermission error'); }
   }else{ document.getElementById('startDetectBtn').disabled=false; status('Motion API OK'); log('Motion API: OK'); }
 });
 
-document.getElementById('startDetectBtn').addEventListener('click',()=>{
-  document.getElementById('startDetectBtn').disabled=true;
-  document.getElementById('stopDetectBtn').disabled=false;
-  status('検知開始'); log('検知開始');
-});
+document.getElementById('masterVol').addEventListener('input',(e)=> setMasterVol(Number(e.target.value)));
 
-document.getElementById('stopDetectBtn').addEventListener('click',()=>{
-  document.getElementById('startDetectBtn').disabled=false;
-  document.getElementById('stopDetectBtn').disabled=true;
-  status('停止'); log('検知停止');
-});
-
-drawViz();
+refreshPatternList(); refreshLearnSoundSelect();
 </script>
 </body>
 </html>
