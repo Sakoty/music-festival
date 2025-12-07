@@ -1,63 +1,113 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8" />
-<title>iPhone Motion → Sound</title>
+<meta charset="UTF-8">
+<title>iPhone Motion → Custom Sound</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: Arial, sans-serif; padding: 20px; }
+  body { font-family: Arial; padding: 20px; }
   button { padding: 12px 20px; font-size: 16px; margin: 10px 0; }
-  .status { margin-top: 20px; }
+  select, input { font-size: 16px; padding: 5px; }
+  .row { margin-top: 12px; }
+  .status { margin-top: 20px; font-size: 14px; color: #333; }
 </style>
 </head>
 <body>
 
-<h2>iPhone 動作検知 → 音を鳴らすデモ</h2>
+<h2>動きパターン → 音カスタム</h2>
 
 <button id="permBtn">動きセンサーの許可を与える</button><br>
 <button id="startBtn" disabled>開始</button>
+
+<div class="row">
+  <label>動きパターン:</label>
+  <select id="motionType">
+    <option value="shake">強く振ったとき</option>
+    <option value="x">左右の動き（X軸）</option>
+    <option value="y">上下の動き（Y軸）</option>
+    <option value="z">前後の動き（Z軸）</option>
+  </select>
+</div>
+
+<div class="row">
+  <label>音の種類:</label>
+  <select id="soundType">
+    <option value="high">高いビープ音</option>
+    <option value="low">低いビープ音</option>
+    <option value="double">2音パターン</option>
+    <option value="custom">カスタム周波数</option>
+  </select>
+</div>
+
+<div class="row">
+  <label>カスタム周波数（Hz）:</label>
+  <input id="freq" type="range" min="200" max="3000" value="1000">
+  <span id="freqVal">1000Hz</span>
+</div>
+
 <p class="status" id="status">ステータス: 待機中</p>
 
 <script>
-let audioCtx;
-let gain;
-let threshold = 2.0; // 加速度の変化量のしきい値（好きに調整）
+let audioCtx, gain;
+let threshold = 2.0;
 
+// 音の初期化
 function initAudio() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   gain = audioCtx.createGain();
-  gain.gain.value = 0.3;
+  gain.gain.value = 0.5;
   gain.connect(audioCtx.destination);
 }
 
-function playBeep() {
+// 単音ビープ
+function beep(freq = 800, time = 0.2) {
   const osc = audioCtx.createOscillator();
   osc.type = "sine";
-  osc.frequency.value = 880;
+  osc.frequency.value = freq;
   osc.connect(gain);
   osc.start();
-  osc.stop(audioCtx.currentTime + 0.2);
+  osc.stop(audioCtx.currentTime + time);
 }
 
-document.getElementById("permBtn").onclick = async () => {
-  // iPhone の動きセンサー許可
+// 2音パターン
+function doubleBeep() {
+  beep(800, 0.15);
+  setTimeout(() => beep(1200, 0.15), 150);
+}
+
+// ユーザー選択音
+function playSelectedSound() {
+  const type = soundType.value;
+  const customFreq = Number(freq.value);
+
+  if (type === "high") beep(1200);
+  if (type === "low") beep(400);
+  if (type === "double") doubleBeep();
+  if (type === "custom") beep(customFreq);
+}
+
+freq.oninput = () => {
+  document.getElementById("freqVal").textContent = freq.value + "Hz";
+};
+
+// センサー許可
+permBtn.onclick = async () => {
   if (typeof DeviceMotionEvent.requestPermission === "function") {
     const res = await DeviceMotionEvent.requestPermission();
     if (res === "granted") {
-      document.getElementById("status").textContent = "許可されました。開始できます。";
-      document.getElementById("startBtn").disabled = false;
+      status.textContent = "許可されました。開始できます。";
+      startBtn.disabled = false;
     } else {
       alert("センサーの許可が必要です。");
     }
-  } else {
-    alert("このブラウザは iPhone 動きセンサー許可APIに対応していません。");
   }
 };
 
-document.getElementById("startBtn").onclick = () => {
+// 開始
+startBtn.onclick = () => {
   if (!audioCtx) initAudio();
 
-  document.getElementById("status").textContent = "動き検知中…";
+  status.textContent = "動き検知中…";
 
   window.addEventListener("devicemotion", (e) => {
     const ax = e.accelerationIncludingGravity.x || 0;
@@ -65,10 +115,18 @@ document.getElementById("startBtn").onclick = () => {
     const az = e.accelerationIncludingGravity.z || 0;
 
     const total = Math.sqrt(ax*ax + ay*ay + az*az);
+    const type = motionType.value;
 
-    if (total > threshold) {
-      playBeep();
-      document.getElementById("status").textContent = "動きを検知！ (" + total.toFixed(2) + ")";
+    let detect = false;
+
+    if (type === "shake" && total > threshold + 3) detect = true;
+    if (type === "x" && Math.abs(ax) > threshold) detect = true;
+    if (type === "y" && Math.abs(ay) > threshold) detect = true;
+    if (type === "z" && Math.abs(az) > threshold) detect = true;
+
+    if (detect) {
+      playSelectedSound();
+      status.textContent = `動きを検知！ (${type})`;
     }
   });
 };
