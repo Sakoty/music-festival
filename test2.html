@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Motion Sound — 学習パターン 完全版</title>
+<title>Motion Sound — 完全統合版（学習改善）</title>
 <style>
 :root{--bg:#fff;--card:#f8f9fb;--muted:#666;--accent:#0b84ff}
 body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,"Noto Sans JP";margin:0;background:var(--bg);color:#111}
@@ -18,19 +18,26 @@ label{display:block;font-size:13px;color:var(--muted);margin-top:8px}
 input[type=range]{width:100%}
 select,input[type=text],input[type=file]{width:100%;padding:8px;border-radius:8px;border:1px solid #ddd}
 small{color:var(--muted)}
-#log{height:140px;overflow:auto;background:#0f1724;color:#d1d5db;padding:8px;border-radius:8px;font-family:monospace;font-size:12px}
+#log{height:120px;overflow:auto;background:#0f1724;color:#d1d5db;padding:8px;border-radius:8px;font-family:monospace;font-size:12px}
 ul.list{list-style:none;padding:0;margin:8px 0}
 ul.list li{padding:8px;border-bottom:1px solid #f1f3f5;display:flex;justify-content:space-between;gap:8px;align-items:center}
 .muted{color:var(--muted)}
 canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 .smallbtn{background:#fff;border:1px solid #e6e9ef;padding:6px 8px;color:#222;border-radius:6px}
 .footer{margin-top:12px;font-size:12px;color:var(--muted)}
+
+/* --- 新UI: 学習状態表示 --- */
+.learn-ui { margin-top:8px; display:flex; gap:8px; align-items:center; }
+.progress { height:10px; background:#eee; border-radius:6px; overflow:hidden; width:100%; }
+.progress > i { display:block; height:100%; width:0%; background:var(--accent); transition:width 0.12s linear; }
+.badge { padding:4px 8px; border-radius:8px; background:#f1f5f9; color:#111; font-size:13px; }
+.pattern-preview { width:100%; height:56px; background:#081017; border-radius:6px; margin-top:8px; }
+.pattern-meta { font-size:12px; color:var(--muted); margin-top:6px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-<h1>Motion Sound — 学習パターン 完全版</h1>
-
+<h1>Motion Sound — 完全統合版（学習改善）</h1>
 <div class="grid">
   <div class="card">
     <h3>準備 & 許可</h3>
@@ -43,8 +50,11 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 
     <hr/>
 
-    <h3>音ファイル（複数可）</h3>
+    <h3>音ファイル（複数可 / ローカル）</h3>
     <input id="fileInput" type="file" accept="audio/*" multiple>
+    <label>外部音源URL<input id="urlInput" type="text" placeholder="例: https://.../sound.mp3"></label>
+    <button id="addUrlBtn">URL登録</button>
+
     <select id="motionSelect">
       <option value="shake">強いシェイク</option>
       <option value="x">左右(X)</option>
@@ -76,10 +86,22 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 
     <h3>モーション学習</h3>
     <label>パターン名 <input id="patternName" type="text" placeholder="例: 2回縦に振る"></label>
-    <div style="display:flex;gap:8px">
+    <label>学習パターン用の音 
+      <select id="learnSoundSelect"></select>
+    </label>
+
+    <div class="learn-ui">
       <button id="startLearn">学習開始（3秒）</button>
+      <div class="progress" title="学習進捗"><i id="learnProgress"></i></div>
+      <div class="badge" id="learnState">待機</div>
+    </div>
+
+    <div class="pattern-meta" id="learnInfo">記録数: 0</div>
+    <canvas id="patternPreview" class="pattern-preview"></canvas>
+
+    <div style="display:flex;gap:8px;margin-top:8px">
       <button id="savePattern" class="ghost">保存</button>
-      <button id="testPattern" class="ghost">テスト</button>
+      <button id="testPattern" class="ghost">テスト再生</button>
     </div>
 
     <hr/>
@@ -100,32 +122,12 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 </div>
 
 <script>
-/* ======= Audio 初期化・再生 ======= */
+/* =========================
+   基本オーディオ / UI 初期
+   ========================= */
 let audioCtx=null;
 const master={gainNode:null,vol:0.8};
-
-/* ======= 事前組み込み音源 ======= */
-const soundMap={
-  shake:[{name:'shake1',url:'sounds/shake1.mp3',buf:null}],
-  x:[{name:'x1',url:'sounds/x1.mp3',buf:null}],
-  y:[{name:'y1',url:'sounds/y1.mp3',buf:null}],
-  z:[{name:'z1',url:'sounds/z1.mp3',buf:null}],
-  learned:[]
-};
-
-async function loadAllSounds(){
-  initAudioIfNeeded();
-  for(const k in soundMap){
-    for(const s of soundMap[k]){
-      try{
-        const res = await fetch(s.url);
-        const ab = await res.arrayBuffer();
-        s.buf = await decodeAudioSafe(ab);
-      } catch(e){ console.error('音源読み込み失敗:', s.url); }
-    }
-  }
-  log('全音源読み込み完了');
-}
+const soundMap={shake:[],x:[],y:[],z:[],learned:[]};
 
 function initAudioIfNeeded(){
   if(!audioCtx){
@@ -133,47 +135,82 @@ function initAudioIfNeeded(){
     master.gainNode=audioCtx.createGain();
     master.gainNode.gain.value=master.vol;
     master.gainNode.connect(audioCtx.destination);
-    document.addEventListener('click',()=>audioCtx.resume(),{once:true});
-    document.addEventListener('touchstart',()=>audioCtx.resume(),{once:true});
-    log('AudioContext初期化');
+    // resume on first user gesture
+    document.addEventListener('click', ()=>{ if(audioCtx.state==='suspended') audioCtx.resume(); }, {once:true});
+    document.addEventListener('touchstart', ()=>{ if(audioCtx.state==='suspended') audioCtx.resume(); }, {once:true});
+    log('AudioContext 初期化');
   }
 }
-
-function decodeAudioSafe(ab){
+function decodeAudioSafe(arrayBuffer){
   initAudioIfNeeded();
   return new Promise((resolve,reject)=>{
-    try{ audioCtx.decodeAudioData(ab.slice(0),buf=>resolve(buf),err=>reject(err)); }
-    catch(e){ reject(e); }
+    try{
+      const p = audioCtx.decodeAudioData(arrayBuffer.slice(0),
+        (buf)=>resolve(buf),
+        (err)=>reject(err)
+      );
+      // in some browsers decodeAudioData returns a promise
+      if(p && typeof p.then === 'function') p.then(resolve).catch(reject);
+    }catch(e){ reject(e); }
   });
 }
-
+function playBuffer(buf){
+  if(!buf) { console.warn('playBuffer: buf is null'); return; }
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  const src=audioCtx.createBufferSource();
+  src.buffer=buf;
+  src.connect(master.gainNode);
+  try{ src.start(); }catch(e){ console.error('start failed', e); }
+}
 function setMasterVol(v){ master.vol=v; if(master.gainNode) master.gainNode.gain.value=v; }
-function playBuffer(buf){ if(!buf) return; if(audioCtx.state==='suspended') audioCtx.resume(); const src=audioCtx.createBufferSource(); src.buffer=buf; src.connect(master.gainNode); src.start(); }
-function playMotionRandom(motion){ const arr=soundMap[motion]||[]; if(arr.length===0) return; const available=arr.filter(s=>s.buf); if(available.length===0) return; const idx=Math.floor(Math.random()*available.length); playBuffer(available[idx].buf); }
 
-/* ======= ファイル登録・リスト表示 ======= */
-document.getElementById('assignFiles').addEventListener('click',async ()=>{
-  const files=Array.from(document.getElementById('fileInput').files||[]);
+/* =========================
+   サウンド登録: ローカル / URL
+   ========================= */
+document.getElementById('assignFiles').addEventListener('click', async ()=>{
+  const files=Array.from(document.getElementById('fileInput').files || []);
   const motion=document.getElementById('motionSelect').value;
   if(files.length===0){ alert('音ファイル選択'); return; }
   initAudioIfNeeded();
   for(const f of files){
     try{
-      const ab=await f.arrayBuffer();
-      const buf=await decodeAudioSafe(ab);
-      soundMap[motion].push({name:f.name,buf});
+      const ab = await f.arrayBuffer();
+      const buf = await decodeAudioSafe(ab);
+      if(!buf) { log(`decode失敗: ${f.name}`); continue; }
+      soundMap[motion].push({name:f.name, buf});
       log(`登録: ${f.name} -> ${motion}`);
-    } catch(e){ log(`decode失敗: ${f.name}`); }
+    }catch(e){ console.error(e); log(`登録失敗: ${f.name}`); }
   }
   refreshSoundLists();
+  refreshLearnSoundSelect();
 });
 
-document.getElementById('clearMotionSounds').addEventListener('click',()=>{
+document.getElementById('addUrlBtn').addEventListener('click', async ()=>{
+  const url = document.getElementById('urlInput').value.trim();
+  const motion = document.getElementById('motionSelect').value;
+  if(!url){ alert('URL入力'); return; }
+  initAudioIfNeeded();
+  try{
+    const res = await fetch(url, { mode: 'cors' });
+    if(!res.ok) throw new Error('fetch failed: '+res.status);
+    const ab = await res.arrayBuffer();
+    const buf = await decodeAudioSafe(ab);
+    if(!buf) { log('URL decode失敗: '+url); return; }
+    const name = url.split('/').pop() || url;
+    soundMap[motion].push({name, buf});
+    log(`外部URL登録: ${name} -> ${motion}`);
+  }catch(e){ console.error(e); log(`URL登録失敗: ${url}`); alert('URLからの取得に失敗しました（CORS/形式を確認）'); }
+  refreshSoundLists();
+  refreshLearnSoundSelect();
+});
+
+document.getElementById('clearMotionSounds').addEventListener('click', ()=>{
   const motion=document.getElementById('motionSelect').value;
   if(!confirm(motion+' の音を削除しますか?')) return;
   soundMap[motion]=[];
   refreshSoundLists();
-  log(`${motion}クリア`);
+  refreshLearnSoundSelect();
+  log(`${motion} クリア`);
 });
 
 function refreshSoundLists(){
@@ -184,126 +221,361 @@ function refreshSoundLists(){
     const left=document.createElement('div'); left.innerHTML=`<strong>${k}</strong> (${soundMap[k].length})`;
     const right=document.createElement('div');
     soundMap[k].forEach((s,i)=>{
-      const btn=document.createElement('button'); btn.className='smallbtn'; btn.textContent='▶';
-      btn.addEventListener('click',()=>playBuffer(s.buf));
-      right.appendChild(btn);
+      const play=document.createElement('button'); play.className='smallbtn'; play.textContent='▶';
+      play.addEventListener('click', ()=> playBuffer(s.buf) );
       const rm=document.createElement('button'); rm.className='smallbtn'; rm.textContent='✕';
-      rm.addEventListener('click',()=>{ soundMap[k].splice(i,1); refreshSoundLists(); });
-      right.appendChild(rm);
-      const span=document.createElement('span'); span.textContent=s.name; span.style.marginLeft='6px';
-      right.appendChild(span);
+      rm.addEventListener('click', ()=> { soundMap[k].splice(i,1); refreshSoundLists(); refreshLearnSoundSelect(); });
+      const span=document.createElement('span'); span.style.marginLeft='6px'; span.textContent=s.name;
+      right.appendChild(play); right.appendChild(rm); right.appendChild(span);
     });
     li.appendChild(left); li.appendChild(right); ul.appendChild(li);
   }
 }
 
-/* ======= 学習パターン処理 ======= */
-let currentLearn=[],isLearning=false,lastTriggeredAt={};
-const learnBuffer=[];
+/* =========================
+   学習ロジック改善 & UI
+   ========================= */
+let currentLearn = [];        // 生データ（学習中に push される）
+let isLearning = false;
+let learnStartAt = 0;
+let lastTriggeredAt = {};
 
-function dtwDistance(a,b){ //1D DTW
-  const n=a.length,m=b.length; if(n===0||m===0) return Infinity;
-  const INF=1e9; const D=new Array(n+1).fill(0).map(()=>new Array(m+1).fill(INF)); D[0][0]=0;
-  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++){
-    const cost=Math.abs(a[i-1]-b[j-1]);
-    D[i][j]=cost+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
-  }
-  return D[n][m]/(n+m);
+// UI elems for learning progress and preview
+const learnProgressEl = document.getElementById('learnProgress');
+const learnStateEl = document.getElementById('learnState');
+const learnInfoEl = document.getElementById('learnInfo');
+const patternPreviewCanvas = document.getElementById('patternPreview');
+const pctx = patternPreviewCanvas.getContext('2d');
+
+// handle start learn with clear visual countdown & disable button while recording
+document.getElementById('startLearn').addEventListener('click', ()=>{
+  if(isLearning) return;
+  currentLearn = [];
+  isLearning = true;
+  learnStartAt = Date.now();
+  document.getElementById('startLearn').disabled = true;
+  learnStateEl.textContent = '録音中';
+  learnStateEl.style.background = '#ffe8b2';
+  learnStateEl.style.color = '#111';
+  updateLearnProgress(0);
+  log('学習開始 — 3秒間記録します');
+  // progress animation (3s)
+  const duration = 3000;
+  const tick = 50;
+  let elapsed = 0;
+  const iv = setInterval(()=>{
+    elapsed += tick;
+    const pct = Math.min(1, elapsed / duration) * 100;
+    updateLearnProgress(pct);
+    if(elapsed >= duration){
+      clearInterval(iv);
+      isLearning = false;
+      learnStateEl.textContent = '録音完了';
+      learnStateEl.style.background = '#d3f9d8';
+      document.getElementById('startLearn').disabled = false;
+      log(`学習終了 — 記録点数: ${currentLearn.length}`);
+      updateLearnInfo();
+      drawLearnPreview(); // show waveform for recorded sample
+    }
+  }, tick);
+});
+
+// helper to update progress bar
+function updateLearnProgress(pct){
+  learnProgressEl.style.width = `${pct}%`;
+  // small text badge
+  learnStateEl.textContent = pct < 100 ? `録音中 ${Math.round(pct)}%` : '録音完了';
 }
-function resample(arr,targetLen){ if(arr.length===targetLen) return arr.slice(); if(arr.length===0) return new Array(targetLen).fill(0);
-  const out=new Array(targetLen); for(let i=0;i<targetLen;i++){ const t=i*(arr.length-1)/(targetLen-1); const lo=Math.floor(t),hi=Math.ceil(t); out[i]=lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo); } return out; }
 
-document.getElementById('startLearn').addEventListener('click',()=>{
-  currentLearn=[]; isLearning=true; status('学習中… 3秒');
-  setTimeout(()=>{ isLearning=false; status('学習完了'); },3000);
+// update counter text
+function updateLearnInfo(){
+  learnInfoEl.textContent = `記録数: ${currentLearn.length} （約 ${Math.round(currentLearn.length/60)} 秒）`;
+}
+
+// draw small preview of last recorded pattern
+function drawLearnPreview(arr){
+  const a = arr || currentLearn;
+  const w = patternPreviewCanvas.width = patternPreviewCanvas.clientWidth * devicePixelRatio;
+  const h = patternPreviewCanvas.height = patternPreviewCanvas.clientHeight * devicePixelRatio;
+  pctx.clearRect(0,0,w,h);
+  pctx.fillStyle = '#081017';
+  pctx.fillRect(0,0,w,h);
+  if(!a || a.length === 0) return;
+  pctx.lineWidth = 1.5 * devicePixelRatio;
+  pctx.strokeStyle = '#6ee7b7';
+  pctx.beginPath();
+  const N = a.length;
+  for(let i=0;i<N;i++){
+    const x = i * w / (N-1);
+    const y = h - Math.min(1.0, a[i]/20) * h;
+    if(i===0) pctx.moveTo(x,y); else pctx.lineTo(x,y);
+  }
+  pctx.stroke();
+}
+
+/* save pattern button: store data (resampled) + reference to chosen sound */
+document.getElementById('savePattern').addEventListener('click', ()=>{
+  const name = document.getElementById('patternName').value.trim();
+  if(!name){ alert('パターン名を入力してください'); return; }
+  if(currentLearn.length < 12){ alert('学習データが短すぎます。学習をやり直してください。'); return; }
+  const sel = document.getElementById('learnSoundSelect');
+  const soundRef = sel.value;
+  if(!soundRef){ alert('学習パターンに紐づける音を選択してください'); return; }
+  const [motion, idx] = soundRef.split('|');
+  const bufRef = soundMap[motion] && soundMap[motion][Number(idx)] ? soundMap[motion][Number(idx)].buf : null;
+  // normalize/resample to fixed length
+  const norm = resample(currentLearn, 60);
+  const saved = JSON.parse(localStorage.getItem('motionPatterns') || '[]');
+  saved.push({ name, data: norm, sound: { motion, idx: Number(idx) }, created: Date.now(), rawLen: currentLearn.length });
+  localStorage.setItem('motionPatterns', JSON.stringify(saved));
+  refreshPatternList();
+  log(`パターン保存: ${name} (len=${currentLearn.length})`);
 });
 
-document.getElementById('savePattern').addEventListener('click',()=>{
-  const name=document.getElementById('patternName').value.trim(); if(!name){ alert('名前を入力'); return; }
-  if(currentLearn.length<10){ alert('十分なデータがありません'); return; }
-  const data=resample(currentLearn,60);
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  saved.push({name,data}); if(saved.length>100) saved.shift();
-  localStorage.setItem('motionPatterns',JSON.stringify(saved));
-  refreshPatternList(); log(`学習パターン保存: ${name}`);
+// test pattern: play selected learnSound
+document.getElementById('testPattern').addEventListener('click', ()=>{
+  const sel = document.getElementById('learnSoundSelect');
+  const soundRef = sel.value;
+  if(!soundRef){ alert('音を選択してください'); return; }
+  const [motion, idx] = soundRef.split('|');
+  const entry = soundMap[motion] && soundMap[motion][Number(idx)];
+  if(entry && entry.buf) playBuffer(entry.buf);
 });
 
-document.getElementById('testPattern').addEventListener('click',()=>{
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]'); if(saved.length===0){ alert('保存なし'); return; }
-  alert('最新パターン: '+saved[saved.length-1].name);
-});
-
-function refreshPatternList(){
-  const ul=document.getElementById('patternList'); ul.innerHTML='';
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  saved.forEach((p,i)=>{
-    const li=document.createElement('li');
-    li.textContent=p.name;
-    const rm=document.createElement('button'); rm.className='smallbtn'; rm.textContent='✕';
-    rm.addEventListener('click',()=>{
-      saved.splice(i,1); localStorage.setItem('motionPatterns',JSON.stringify(saved)); refreshPatternList();
+/* refresh learn sound select dropdown */
+function refreshLearnSoundSelect(){
+  const sel = document.getElementById('learnSoundSelect');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">-- 選択 --</option>';
+  for(const m in soundMap){
+    soundMap[m].forEach((s,i)=>{
+      const opt = document.createElement('option');
+      opt.value = m + '|' + i;
+      opt.textContent = `${s.name} (${m})`;
+      sel.appendChild(opt);
     });
-    li.appendChild(rm); ul.appendChild(li);
+  }
+  if(prev) sel.value = prev;
+}
+
+/* render saved patterns with metadata & playback */
+function refreshPatternList(){
+  const ul = document.getElementById('patternList'); ul.innerHTML = '';
+  const saved = JSON.parse(localStorage.getItem('motionPatterns') || '[]');
+  saved.forEach((p, i)=>{
+    const li = document.createElement('li');
+    const left = document.createElement('div');
+    left.innerHTML = `<strong>${p.name}</strong><br><small class="muted">len:${p.rawLen || p.data.length} saved:${new Date(p.created||0).toLocaleString()}</small>`;
+    const right = document.createElement('div');
+    const playBtn = document.createElement('button'); playBtn.className='smallbtn'; playBtn.textContent='▶';
+    playBtn.title = 'パターンに紐づく音を再生';
+    playBtn.addEventListener('click', ()=> playPatternSound(p));
+    const previewBtn = document.createElement('button'); previewBtn.className='smallbtn'; previewBtn.textContent='📈';
+    previewBtn.title = 'パターン波形を表示';
+    previewBtn.addEventListener('click', ()=> drawLearnPreview(p.data));
+    const delBtn = document.createElement('button'); delBtn.className='smallbtn'; delBtn.textContent='✕';
+    delBtn.addEventListener('click', ()=>{
+      if(!confirm('削除しますか？')) return;
+      saved.splice(i,1); localStorage.setItem('motionPatterns', JSON.stringify(saved)); refreshPatternList();
+    });
+    right.appendChild(playBtn); right.appendChild(previewBtn); right.appendChild(delBtn);
+    li.appendChild(left); li.appendChild(right);
+    ul.appendChild(li);
   });
 }
 
-/* ======= DeviceMotion検知 & 学習パターン判定 ======= */
-const viz=document.getElementById('viz'); const vctx=viz.getContext('2d'); let vizBuffer=[];
-window.addEventListener('resize',()=>drawViz());
-function drawViz(){ viz.width=viz.clientWidth*devicePixelRatio; viz.height=viz.clientHeight*devicePixelRatio; vctx.clearRect(0,0,viz.width,viz.height); vctx.fillStyle='#07121a'; vctx.fillRect(0,0,viz.width,viz.height); if(vizBuffer.length===0) return; vctx.lineWidth=2*devicePixelRatio; vctx.strokeStyle='#0bffb3'; vctx.beginPath(); const N=vizBuffer.length; for(let i=0;i<N;i++){ const x=i*viz.width/(N-1); const y=viz.height-(vizBuffer[i]/20)*viz.height; i===0?vctx.moveTo(x,y):vctx.lineTo(x,y); } vctx.stroke(); }
+/* play sound associated with pattern (if exists) */
+function playPatternSound(p){
+  if(!p || !p.sound) { log('pattern sound missing'); return; }
+  const { motion, idx } = p.sound;
+  const arr = soundMap[motion] || [];
+  const entry = arr[Number(idx)];
+  if(entry && entry.buf) playBuffer(entry.buf);
+  else log('紐づけられた音が見つかりません');
+}
 
-window.addEventListener('devicemotion',(ev)=>{
-  const acc=ev.accelerationIncludingGravity||ev.acceleration; if(!acc) return;
-  const ax=acc.x||0,ay=acc.y||0,az=acc.z||0;
-  const total=Math.sqrt(ax*ax+ay*ay+az*az);
-  vizBuffer.push(total); if(vizBuffer.length>120) vizBuffer.shift(); drawViz();
-  if(isLearning) currentLearn.push(total);
-  learnBuffer.push(total); if(learnBuffer.length>800) learnBuffer.shift();
+/* =========================
+   DTW / resample (unchanged core)
+   ========================= */
+function dtwDistance(a,b){
+  const n=a.length, m=b.length; if(n===0||m===0) return Infinity;
+  const INF=1e9;
+  const D = new Array(n+1);
+  for(let i=0;i<=n;i++){ D[i] = new Array(m+1).fill(INF); }
+  D[0][0]=0;
+  for(let i=1;i<=n;i++){
+    for(let j=1;j<=m;j++){
+      const cost = Math.abs(a[i-1] - b[j-1]);
+      D[i][j] = cost + Math.min(D[i-1][j], D[i][j-1], D[i-1][j-1]);
+    }
+  }
+  return D[n][m] / (n+m);
+}
+function resample(arr, targetLen){
+  if(arr.length === targetLen) return arr.slice();
+  if(arr.length === 0) return new Array(targetLen).fill(0);
+  const out = new Array(targetLen);
+  for(let i=0;i<targetLen;i++){
+    const t = i * (arr.length-1) / (targetLen-1);
+    const lo = Math.floor(t), hi = Math.ceil(t);
+    out[i] = lo === hi ? arr[lo] : arr[lo] * (hi - t) + arr[hi] * (t - lo);
+  }
+  return out;
+}
 
-  if(document.getElementById('startDetectBtn').disabled===false) return;
-  const now=Date.now(); const cooldownMs=Number(document.getElementById('cooldown').value);
-  const shakeThreshold=Number(document.getElementById('shakeThresh').value);
-  const axisThreshold=Number(document.getElementById('axisThresh').value);
-  const matchThresh=Number(document.getElementById('matchThresh').value);
+/* =========================
+   可視化（メイン + プレビュー）
+   ========================= */
+const viz = document.getElementById('viz'); const vctx = viz.getContext('2d');
+let vizBuffer = [];
+window.addEventListener('resize', drawViz);
+function drawViz(){
+  viz.width = viz.clientWidth * devicePixelRatio; viz.height = viz.clientHeight * devicePixelRatio;
+  vctx.clearRect(0,0,viz.width,viz.height);
+  vctx.fillStyle = '#07121a'; vctx.fillRect(0,0,viz.width,viz.height);
+  if(vizBuffer.length === 0) return;
+  vctx.lineWidth = 2 * devicePixelRatio; vctx.strokeStyle = '#0bffb3'; vctx.beginPath();
+  const N = vizBuffer.length;
+  for(let i=0;i<N;i++){
+    const x = i * viz.width / (N-1);
+    const y = viz.height - Math.min(1.0, vizBuffer[i]/20) * viz.height;
+    if(i===0) vctx.moveTo(x,y); else vctx.lineTo(x,y);
+  }
+  vctx.stroke();
+}
 
-  // 学習パターン検知
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  if(saved.length>0){
-    const candidate=resample(learnBuffer.slice(-240),60);
-    let best=null,bestScore=Infinity;
-    for(const p of saved){ const score=dtwDistance(candidate,p.data); if(score<bestScore){bestScore=score; best=p;} }
-    if(best && bestScore<matchThresh){
-      if(now-(lastTriggeredAt['learned']||0)>cooldownMs){
-        lastTriggeredAt['learned']=now;
-        status(`学習パターン検出:${best.name}`); playMotionRandom('learned'); log(`学習パターン:${best.name}トリガー`);
+/* =========================
+   DeviceMotion 検知（修正）
+   - 学習中は currentLearn に push（一定間隔で）するロジックを安定化
+   - 検出ループで saved パターンと比較して発火
+   ========================= */
+let sampleAccum = 0;
+let lastSampleTime = 0;
+const SAMPLE_INTERVAL_MS = 25; // 学習時に取り込む間隔（ms）
+
+window.addEventListener('devicemotion', (ev)=>{
+  const acc = ev.accelerationIncludingGravity || ev.acceleration;
+  if(!acc) return;
+  const ax = acc.x || 0, ay = acc.y || 0, az = acc.z || 0;
+  const total = Math.sqrt(ax*ax + ay*ay + az*az);
+
+  // viz buffer for display (short)
+  vizBuffer.push(total);
+  if(vizBuffer.length > 240) vizBuffer.shift();
+  drawViz();
+
+  // sample at fixed interval when learning
+  const now = Date.now();
+  if(isLearning){
+    if(now - lastSampleTime >= SAMPLE_INTERVAL_MS){
+      currentLearn.push(total);
+      lastSampleTime = now;
+      updateLearnInfo();
+    }
+  }
+
+  // detection only when detection is enabled
+  if(document.getElementById('startDetectBtn').disabled === false){
+    // not started
+    return;
+  }
+
+  const cooldownMs = Number(document.getElementById('cooldown').value);
+  const shakeThreshold = Number(document.getElementById('shakeThresh').value);
+  const axisThreshold = Number(document.getElementById('axisThresh').value);
+  const matchThresh = Number(document.getElementById('matchThresh').value);
+
+  // 学習パターン判定（最近のウィンドウを resample して比較）
+  const saved = JSON.parse(localStorage.getItem('motionPatterns') || '[]');
+  if(saved.length > 0){
+    const candidate = resample(vizBuffer.slice(-240), 60);
+    let best = null, bestScore = Infinity;
+    for(const p of saved){
+      const score = dtwDistance(candidate, p.data);
+      if(score < bestScore){ bestScore = score; best = p; }
+    }
+    if(best && bestScore < matchThresh){
+      if(now - (lastTriggeredAt['learned']||0) > cooldownMs){
+        lastTriggeredAt['learned'] = now;
+        status(`学習パターン検出: ${best.name}`);
+        playPatternSound(best);
+        log(`学習パターン: ${best.name} トリガー (score ${bestScore.toFixed(2)})`);
       }
     }
   }
 
-  if(total>shakeThreshold && now-(lastTriggeredAt['shake']||0)>cooldownMs){ lastTriggeredAt['shake']=now; status('シェイク検出'); playMotionRandom('shake'); log('シェイクトリガー'); }
-  if(Math.abs(ax)>axisThreshold && now-(lastTriggeredAt['x']||0)>cooldownMs){ lastTriggeredAt['x']=now; status('X軸動作'); playMotionRandom('x'); log('Xトリガー'); }
-  if(Math.abs(ay)>axisThreshold && now-(lastTriggeredAt['y']||0)>cooldownMs){ lastTriggeredAt['y']=now; status('Y軸動作'); playMotionRandom('y'); log('Yトリガー'); }
-  if(Math.abs(az)>axisThreshold && now-(lastTriggeredAt['z']||0)>cooldownMs){ lastTriggeredAt['z']=now; status('Z軸動作'); playMotionRandom('z'); log('Zトリガー'); }
+  // シェイク判定（従来ロジック）
+  if(total > shakeThreshold && now - (lastTriggeredAt['shake']||0) > cooldownMs){
+    lastTriggeredAt['shake'] = now;
+    if(soundMap.shake.length > 0) {
+      const idx = Math.floor(Math.random() * soundMap.shake.length);
+      playBuffer(soundMap.shake[idx].buf);
+    }
+    log('Shake!');
+  }
+
+  // 軸判定（X/Y/Z）
+  if(Math.abs(ax) > axisThreshold && now - (lastTriggeredAt['x']||0) > cooldownMs){ lastTriggeredAt['x'] = now; status('X軸動作'); if(soundMap.x.length) playBuffer(soundMap.x[Math.floor(Math.random()*soundMap.x.length)].buf); log('Xトリガー'); }
+  if(Math.abs(ay) > axisThreshold && now - (lastTriggeredAt['y']||0) > cooldownMs){ lastTriggeredAt['y'] = now; status('Y軸動作'); if(soundMap.y.length) playBuffer(soundMap.y[Math.floor(Math.random()*soundMap.y.length)].buf); log('Yトリガー'); }
+  if(Math.abs(az) > axisThreshold && now - (lastTriggeredAt['z']||0) > cooldownMs){ lastTriggeredAt['z'] = now; status('Z軸動作'); if(soundMap.z.length) playBuffer(soundMap.z[Math.floor(Math.random()*soundMap.z.length)].buf); log('Zトリガー'); }
 });
 
-function status(s){ document.getElementById('status').textContent='ステータス: '+s; }
-function log(s){ const l=document.getElementById('log'); const now=new Date().toLocaleTimeString(); l.innerHTML+=`[${now}] ${s}\n`; l.scrollTop=l.scrollHeight; }
-
-/* ======= ボタン ======= */
-document.getElementById('initBtn').addEventListener('click',()=>{
-  initAudioIfNeeded(); status('Audio初期化完了'); document.getElementById('startDetectBtn').disabled=false;
+/* =========================
+   許可ボタン / 検知開始停止
+   - initBtn は iOS の requestPermission を呼び出す（タップ内）
+   ========================= */
+document.getElementById('initBtn').addEventListener('click', async ()=>{
+  initAudioIfNeeded();
+  // request motion permission on iOS Safari
+  if(typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'){
+    try{
+      const res = await DeviceMotionEvent.requestPermission();
+      if(res === 'granted'){
+        status('センサー許可: granted');
+        document.getElementById('startDetectBtn').disabled = false;
+        log('Motion granted');
+      } else {
+        status('センサー許可: denied');
+        alert('動きセンサーの許可が必要です');
+        log('Motion denied');
+      }
+    } catch(e){
+      console.error(e);
+      alert('許可の取得に失敗しました');
+      log('requestPermission error');
+    }
+  } else {
+    document.getElementById('startDetectBtn').disabled = false;
+    status('Motion API OK (request not required)');
+    log('Motion API: OK');
+  }
 });
 
-document.getElementById('startDetectBtn').addEventListener('click',()=>{
-  status('検知開始'); document.getElementById('startDetectBtn').disabled=true; document.getElementById('stopDetectBtn').disabled=false;
+document.getElementById('startDetectBtn').addEventListener('click', ()=>{
+  document.getElementById('startDetectBtn').disabled = true;
+  document.getElementById('stopDetectBtn').disabled = false;
+  status('検知開始');
+  log('検知を開始');
+  // When detection starts we set a flag by disabling start button (used above in devicemotion)
 });
 
-document.getElementById('stopDetectBtn').addEventListener('click',()=>{
-  status('検知停止'); document.getElementById('startDetectBtn').disabled=false; document.getElementById('stopDetectBtn').disabled=true;
+document.getElementById('stopDetectBtn').addEventListener('click', ()=>{
+  document.getElementById('startDetectBtn').disabled = false;
+  document.getElementById('stopDetectBtn').disabled = true;
+  status('停止');
+  log('検知を停止');
 });
 
-/* ======= 初期ロード ======= */
-window.addEventListener('load',()=>{ loadAllSounds(); refreshSoundLists(); refreshPatternList(); drawViz(); });
+/* =========================
+   小さなユーティリティ UI/ログ
+   ========================= */
+function status(txt){ document.getElementById('status').textContent = 'ステータス: ' + txt; }
+function log(txt){ const l = document.getElementById('log'); const t = new Date().toLocaleTimeString(); l.innerHTML = `[${t}] ${txt}\n` + l.innerHTML; }
+
+/* Initial refresh */
+window.addEventListener('load', ()=>{
+  refreshSoundLists(); refreshLearnSoundSelect(); refreshPatternList(); drawViz(); drawLearnPreview();
+});
 </script>
 </body>
 </html>
