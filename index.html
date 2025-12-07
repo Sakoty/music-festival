@@ -2,75 +2,77 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8" />
-<title>Joy-Con ボタン入力テスト</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>iPhone Motion → Sound</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: Arial, sans-serif; padding: 20px; }
+  button { padding: 12px 20px; font-size: 16px; margin: 10px 0; }
+  .status { margin-top: 20px; }
+</style>
 </head>
 <body>
-<h2>Joy-Con ボタン→効果音テスト</h2>
-<button id="connect">🎮 Joy-Con に接続</button>
-<p id="status">未接続</p>
 
-<!-- ボタン割当設定 -->
-<div>
-  <h3>ボタン → 再生音</h3>
-  <label>Aボタン：<input id="soundA" type="text" value="soundA.mp3"></label><br>
-  <label>Bボタン：<input id="soundB" type="text" value="soundB.mp3"></label><br>
-  <label>Xボタン：<input id="soundX" type="text" value="soundX.mp3"></label><br>
-  <label>Yボタン：<input id="soundY" type="text" value="soundY.mp3"></label><br>
-</div>
+<h2>iPhone 動作検知 → 音を鳴らすデモ</h2>
+
+<button id="permBtn">動きセンサーの許可を与える</button><br>
+<button id="startBtn" disabled>開始</button>
+<p class="status" id="status">ステータス: 待機中</p>
 
 <script>
 let audioCtx;
-let gamepadIndex = null;
-let lastButtons = [];
+let gain;
+let threshold = 2.0; // 加速度の変化量のしきい値（好きに調整）
 
-async function playSound(url) {
-  try {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      await audioCtx.resume();
-    }
-    const res = await fetch(url);
-    const buf = await res.arrayBuffer();
-    const audioBuffer = await audioCtx.decodeAudioData(buf);
-
-    const src = audioCtx.createBufferSource();
-    src.buffer = audioBuffer;
-    src.connect(audioCtx.destination);
-    src.start();
-  } catch (e) {
-    console.error("音声エラー", e);
-  }
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  gain = audioCtx.createGain();
+  gain.gain.value = 0.3;
+  gain.connect(audioCtx.destination);
 }
 
-document.getElementById("connect").addEventListener("click", async () => {
-  document.getElementById("status").textContent = "接続待機… (Joy-Con の任意のボタンを押す)";
-});
+function playBeep() {
+  const osc = audioCtx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.value = 880;
+  osc.connect(gain);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.2);
+}
 
-window.addEventListener("gamepadconnected", (e) => {
-  gamepadIndex = e.gamepad.index;
-  lastButtons = e.gamepad.buttons.map(b => b.pressed);
-  document.getElementById("status").textContent = "Joy-Con 接続成功！ index: " + gamepadIndex;
-  updateLoop();
-});
+document.getElementById("permBtn").onclick = async () => {
+  // iPhone の動きセンサー許可
+  if (typeof DeviceMotionEvent.requestPermission === "function") {
+    const res = await DeviceMotionEvent.requestPermission();
+    if (res === "granted") {
+      document.getElementById("status").textContent = "許可されました。開始できます。";
+      document.getElementById("startBtn").disabled = false;
+    } else {
+      alert("センサーの許可が必要です。");
+    }
+  } else {
+    alert("このブラウザは iPhone 動きセンサー許可APIに対応していません。");
+  }
+};
 
-function updateLoop() {
-  const gp = navigator.getGamepads()[gamepadIndex];
-  if (!gp) return;
+document.getElementById("startBtn").onclick = () => {
+  if (!audioCtx) initAudio();
 
-  gp.buttons.forEach((btn, i) => {
-    if (btn.pressed && !lastButtons[i]) {
-      // Joy-Con の一般的なボタン番号(A/B/X/Y)
-      if (i === 1) playSound(document.getElementById("soundA").value); // A
-      if (i === 0) playSound(document.getElementById("soundB").value); // B
-      if (i === 3) playSound(document.getElementById("soundX").value); // X
-      if (i === 2) playSound(document.getElementById("soundY").value); // Y
+  document.getElementById("status").textContent = "動き検知中…";
+
+  window.addEventListener("devicemotion", (e) => {
+    const ax = e.accelerationIncludingGravity.x || 0;
+    const ay = e.accelerationIncludingGravity.y || 0;
+    const az = e.accelerationIncludingGravity.z || 0;
+
+    const total = Math.sqrt(ax*ax + ay*ay + az*az);
+
+    if (total > threshold) {
+      playBeep();
+      document.getElementById("status").textContent = "動きを検知！ (" + total.toFixed(2) + ")";
     }
   });
-
-  lastButtons = gp.buttons.map(btn => btn.pressed);
-  requestAnimationFrame(updateLoop);
-}
+};
 </script>
+
 </body>
 </html>
