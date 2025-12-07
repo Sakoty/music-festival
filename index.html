@@ -37,9 +37,12 @@
 
   <div class="box">
     <h2>4. 検知開始</h2>
-    <button id="startDetect">検知スタート</button>
-    <button id="stopDetect">停止</button>
-  </div>
+<label>モーション検知感度（数値が小さいほど敏感）
+  <input type="range" id="sensitivity" min="5" max="100" value="30" />
+</label>
+<button id="startDetect">検知スタート</button>
+<button id="stopDetect">停止</button>
+</div>
 
   <div class="box">
     <h2>ログ</h2>
@@ -62,7 +65,8 @@ window.onload = () => {
 };
 
 function log(msg){
-  document.getElementById('log').textContent += msg + "\n";
+  document.getElementById('log').textContent += msg + "
+";
 }
 
 // 1. 音追加 ---------------------------------------
@@ -79,8 +83,12 @@ document.getElementById('addSoundBtn').onclick = () => {
 
 function playSound(){
   if (sounds.length === 0) return;
-  sounds[0].currentTime = 0;
-  sounds[0].play();
+  // すべての音を同時に鳴らす
+  sounds.forEach(a => {
+    const s = new Audio(a.src);
+    s.currentTime = 0;
+    s.play();
+  });
 }
 
 // 2. 動作の学習 ---------------------------------------
@@ -158,7 +166,8 @@ function detectMotion(current){
     }
   });
 
-  if (best && bestScore < 30) { // 閾値
+  const threshold = Number(document.getElementById('sensitivity').value);
+  if (best && bestScore < threshold) { // 閾値
     log('検知: ' + best);
     playSound();
   }
