@@ -43,26 +43,53 @@
 
 <script>
 let audioCtx;
-let customSounds = {};
-let learnedMotion = [];    // 学習した加速度データ
+let customSounds = {};       // motion → AudioBuffer
+let learnedMotion = [];      // 学習データ
 let isLearning = false;
 let learnBuffer = [];
 
-// Audio 初期化
+// ------------------------------
+// Audio 初期化 + iPhone対策
+// ------------------------------
 function initAudio() {
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
 }
 
-function playAudioBuffer(arrayBuffer) {
-  audioCtx.decodeAudioData(arrayBuffer.slice(0)).then(buffer => {
-    const src = audioCtx.createBufferSource();
-    src.buffer = buffer;
-    src.connect(audioCtx.destination);
-    src.start();
-  });
+// 画面タップで必ず AudioContext を再開（iPhone対策）
+document.addEventListener("click", () => {
+  if (audioCtx && audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+}, { once: true });
+
+// ------------------------------
+// 音を登録（decode は最初の1回だけ）
+// ------------------------------
+async function registerSound(motion, arrayBuffer) {
+  initAudio();
+  const decoded = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+  customSounds[motion] = decoded;
 }
 
-// 類似度チェック（単純な差分平均）
+// ------------------------------
+// 音を再生
+// ------------------------------
+function playSound(motion) {
+  const buffer = customSounds[motion];
+  if (!buffer) return;
+  initAudio();
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(audioCtx.destination);
+  src.start();
+}
+
+// ------------------------------
+// 類似度計算
+// ------------------------------
 function calcSimilarity(arr1, arr2) {
   if (arr1.length !== arr2.length) return 0;
   let sum = 0;
@@ -72,6 +99,9 @@ function calcSimilarity(arr1, arr2) {
   return 1 - (sum / arr1.length) / 10;
 }
 
+// ------------------------------
+// センサー許可
+// ------------------------------
 document.getElementById("permBtn").onclick = async () => {
   if (typeof DeviceMotionEvent.requestPermission === "function") {
     const res = await DeviceMotionEvent.requestPermission();
@@ -84,22 +114,26 @@ document.getElementById("permBtn").onclick = async () => {
   }
 };
 
+// ------------------------------
 // 音を割り当て
+// ------------------------------
 document.getElementById("assignBtn").onclick = () => {
   const file = document.getElementById("soundFile").files[0];
   const motion = document.getElementById("assignMotion").value;
   if (!file) return alert("音声ファイルを選んでください");
 
   file.arrayBuffer().then(buf => {
-    customSounds[motion] = buf;
+    registerSound(motion, buf);
     document.getElementById("status").textContent =
       `音を '${motion}' に割り当てました`;
   });
 };
 
+// ------------------------------
 // モーション学習
+// ------------------------------
 document.getElementById("learnBtn").onclick = () => {
-  if (!audioCtx) initAudio();
+  initAudio();
   isLearning = true;
   learnBuffer = [];
   document.getElementById("status").textContent = "学習中（3秒動かして）…";
@@ -112,63 +146,64 @@ document.getElementById("learnBtn").onclick = () => {
   }, 3000);
 };
 
+// ------------------------------
 // 動作検知スタート
+// ------------------------------
 document.getElementById("startBtn").onclick = () => {
-  if (!audioCtx) initAudio();
-
+  initAudio();
   document.getElementById("status").textContent = "検知中…";
 
   window.addEventListener("devicemotion", (e) => {
+
     const ax = e.accelerationIncludingGravity.x || 0;
     const ay = e.accelerationIncludingGravity.y || 0;
     const az = e.accelerationIncludingGravity.z || 0;
 
     const total = Math.sqrt(ax*ax + ay*ay + az*az);
 
-    // 学習中 → データ収集中
+    // ---- 学習データ収集中 ----
     if (isLearning) {
       learnBuffer.push(total);
       return;
     }
 
-    // 学習判定
+    // ---- 学習した動きの判定 ----
     if (learnedMotion.length > 10) {
       const recent = learnBuffer.slice(-learnedMotion.length);
       const sim = calcSimilarity(recent, learnedMotion);
       if (sim > 0.75 && customSounds["learned"]) {
-        playAudioBuffer(customSounds["learned"]);
+        playSound("learned");
         document.getElementById("status").textContent =
           `学習した動きを検知！（類似度: ${sim.toFixed(2)}）`;
       }
     }
 
-    // シェイク
+    // ---- 個別モーション ----
     if (total > 4 && customSounds["shake"]) {
-      playAudioBuffer(customSounds["shake"]);
-      document.getElementById("status").textContent = "強いシェイクを検知！";
+      playSound("shake");
+      document.getElementById("status").textContent = "強いシェイク！";
     }
 
     if (Math.abs(ax) > 2 && customSounds["x"]) {
-      playAudioBuffer(customSounds["x"]);
-      document.getElementById("status").textContent = "左右の動きを検知！";
+      playSound("x");
+      document.getElementById("status").textContent = "左右の動き！";
     }
 
     if (Math.abs(ay) > 2 && customSounds["y"]) {
-      playAudioBuffer(customSounds["y"]);
-      document.getElementById("status").textContent = "上下の動きを検知！";
+      playSound("y");
+      document.getElementById("status").textContent = "上下の動き！";
     }
 
     if (Math.abs(az) > 2 && customSounds["z"]) {
-      playAudioBuffer(customSounds["z"]);
-      document.getElementById("status").textContent = "前後の動きを検知！";
+      playSound("z");
+      document.getElementById("status").textContent = "前後の動き！";
     }
 
-    // 直近データをためる（学習比較用）
+    // ---- 比較用バッファ ----
     learnBuffer.push(total);
     if (learnBuffer.length > 200) learnBuffer.shift();
   });
 };
 </script>
-
 </body>
 </html>
