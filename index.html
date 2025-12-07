@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Motion Learning + Custom Sound 完全版</title>
+<title>Motion Learning + Custom Sound (MP3対応)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 body { font-family: Arial; padding: 20px; line-height: 1.6; }
@@ -14,7 +14,7 @@ select, input[type=range], input[type=file] { font-size: 16px; padding: 4px; mar
 </head>
 <body>
 
-<h2>Motion Learning & Custom Sound 完全版</h2>
+<h2>Motion Learning & Custom Sound (MP3対応)</h2>
 
 <div class="block">
   <button id="permBtn">動きセンサー & 音の許可</button>
@@ -22,7 +22,7 @@ select, input[type=range], input[type=file] { font-size: 16px; padding: 4px; mar
 </div>
 
 <div class="block">
-  <h3>🎵 音の追加 / 割り当て</h3>
+  <h3>🎵 音の追加 / 割り当て (MP3対応)</h3>
   <input type="file" id="soundFile" accept="audio/*">
   <select id="assignMotion">
     <option value="shake">強いシェイク</option>
@@ -60,13 +60,13 @@ select, input[type=range], input[type=file] { font-size: 16px; padding: 4px; mar
 
 <script>
 let audioCtx = null;
-let customSounds = {};  // motion: AudioBuffer
-let learnedMotion = []; // 学習した加速度データ
+let customSounds = {};  // motion: [AudioBuffer, ...]
+let learnedMotion = [];
 let isLearning = false;
 let learnBuffer = [];
 let isDetecting = false;
 
-// プリセットロード
+// プリセット
 let presets = {};
 function loadPresets() {
   const saved = localStorage.getItem('motionPresets');
@@ -87,20 +87,13 @@ function refreshPresetList() {
 // 許可ボタン
 document.getElementById('permBtn').addEventListener('click', async () => {
   try {
-    // AudioContext 初期化
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // iOS モーション許可
     if (typeof DeviceMotionEvent.requestPermission === "function") {
       const res = await DeviceMotionEvent.requestPermission();
-      if (res !== "granted") {
-        alert("モーションアクセスが許可されていません");
-        return;
-      }
+      if (res !== "granted") { alert("モーションアクセスが許可されていません"); return; }
     }
     document.getElementById('status').textContent = "✔ 許可されました";
-  } catch(e) {
-    alert("許可エラー: " + e);
-  }
+  } catch(e) { alert("許可エラー: " + e); }
 });
 
 // 音割り当て
@@ -110,19 +103,19 @@ document.getElementById('assignBtn').addEventListener('click', async () => {
   if (!file) return alert("音声ファイルを選んでください");
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-  const arrayBuffer = await file.arrayBuffer();
   try {
+    const arrayBuffer = await file.arrayBuffer();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
     if (!customSounds[motion]) customSounds[motion] = [];
-    customSounds[motion].push(audioBuffer); // 複数音対応
+    customSounds[motion].push(audioBuffer);
     document.getElementById('soundCount').textContent = Object.values(customSounds).flat().length;
     document.getElementById('status').textContent = `'${motion}' に音を割り当てました`;
   } catch(err) {
-    alert("デコード失敗: " + err);
+    alert("音デコード失敗: " + err);
   }
 });
 
-// 再生関数
+// 再生
 function playSound(motion) {
   if (!customSounds[motion] || customSounds[motion].length === 0) return;
   customSounds[motion].forEach(buf => {
@@ -146,7 +139,7 @@ document.getElementById('learnBtn').addEventListener('click', () => {
   }, 3000);
 });
 
-// 感度取得
+// 感度
 function getThreshold() {
   return Number(document.getElementById('sensitivity').value);
 }
@@ -158,32 +151,27 @@ let motionHandler = (e) => {
   const az = e.accelerationIncludingGravity.z || 0;
   const total = Math.sqrt(ax*ax + ay*ay + az*az);
 
-  if (isLearning) {
-    learnBuffer.push(total);
-    return;
-  }
+  if (isLearning) { learnBuffer.push(total); return; }
 
   const threshold = getThreshold();
 
-  // 学習判定
   if (learnedMotion.length > 10) {
     const recent = learnBuffer.slice(-learnedMotion.length);
     if (recent.length === learnedMotion.length) {
       let sum = 0;
-      for (let i = 0; i < learnedMotion.length; i++) sum += Math.abs(recent[i] - learnedMotion[i]);
-      const sim = 1 - (sum / learnedMotion.length)/10;
+      for (let i=0; i<learnedMotion.length; i++) sum += Math.abs(recent[i]-learnedMotion[i]);
+      const sim = 1 - (sum/learnedMotion.length)/10;
       if (sim > 0.75) playSound("learned");
     }
   }
 
-  // シェイク判定
   if (total > threshold) playSound("shake");
   if (Math.abs(ax) > threshold) playSound("x");
   if (Math.abs(ay) > threshold) playSound("y");
   if (Math.abs(az) > threshold) playSound("z");
 
   learnBuffer.push(total);
-  if (learnBuffer.length > 200) learnBuffer.shift();
+  if (learnBuffer.length>200) learnBuffer.shift();
 };
 
 // 検知開始 / 停止
@@ -207,10 +195,7 @@ document.getElementById('stopDetectBtn').addEventListener('click', () => {
 document.getElementById('savePreset').addEventListener('click', () => {
   const name = prompt("プリセット名を入力");
   if (!name) return;
-  presets[name] = {
-    learnedMotion,
-    customSounds: Object.keys(customSounds).reduce((acc,k)=>{acc[k]=customSounds[k].map(b=>b.getChannelData(0)); return acc;},{})
-  };
+  presets[name] = { learnedMotion };
   localStorage.setItem('motionPresets', JSON.stringify(presets));
   refreshPresetList();
 });
