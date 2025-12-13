@@ -1,0 +1,166 @@
+/* =========================
+   最小構成 Motion + Sound
+   + Style Injection
+   ========================= */
+
+// ===== グローバル =====
+let audioCtx = null;
+let isReady = false;
+let statusEl = null;
+
+/* =========================
+   Style を JS から追加
+   ========================= */
+(function injectStyle() {
+  const style = document.createElement("style");
+  style.textContent = `
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #111;
+      color: #fff;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #panel {
+      background: #1e1e1e;
+      border-radius: 16px;
+      padding: 24px 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      text-align: center;
+      max-width: 320px;
+      width: 90%;
+    }
+    #panel h1 {
+      font-size: 18px;
+      margin: 0 0 12px;
+    }
+    #status {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #9ee7ff;
+    }
+    #hint {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #aaa;
+    }
+    .ready {
+      color: #7CFF7C !important;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+/* =========================
+   UI 作成
+   ========================= */
+(function createUI() {
+  const panel = document.createElement("div");
+  panel.id = "panel";
+
+  panel.innerHTML = `
+    <h1>Motion Sound Test</h1>
+    <div id="status">画面をタップしてください</div>
+    <div id="hint">初回はセンサー許可が表示されます</div>
+  `;
+
+  document.body.appendChild(panel);
+  statusEl = document.getElementById("status");
+})();
+
+/* =========================
+   Audio 初期化
+   ========================= */
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+}
+
+/* =========================
+   音を鳴らす（テスト用）
+   ========================= */
+function playBeep() {
+  if (!audioCtx) return;
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  osc.type = "sine";
+  osc.frequency.value = 880;
+  gain.gain.value = 0.25;
+
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.15);
+}
+
+/* =========================
+   モーション許可
+   ========================= */
+async function requestMotionPermission() {
+  if (
+    typeof DeviceMotionEvent !== "undefined" &&
+    typeof DeviceMotionEvent.requestPermission === "function"
+  ) {
+    const res = await DeviceMotionEvent.requestPermission();
+    if (res !== "granted") {
+      statusEl.textContent = "センサーが許可されていません";
+      return false;
+    }
+  }
+  return true;
+}
+
+/* =========================
+   モーション監視
+   ========================= */
+function startMotion() {
+  window.addEventListener(
+    "devicemotion",
+    (e) => {
+      if (!isReady) return;
+
+      const ax = e.accelerationIncludingGravity?.x || 0;
+      const ay = e.accelerationIncludingGravity?.y || 0;
+      const az = e.accelerationIncludingGravity?.z || 0;
+
+      const power = Math.sqrt(ax * ax + ay * ay + az * az);
+
+      if (power > 18) {
+        playBeep();
+        statusEl.textContent = "動きを検知！";
+      }
+    },
+    { passive: true }
+  );
+}
+
+/* =========================
+   ユーザー操作（最重要）
+   ========================= */
+document.addEventListener("click", async () => {
+  if (isReady) return;
+
+  statusEl.textContent = "準備中…";
+
+  const ok = await requestMotionPermission();
+  if (!ok) return;
+
+  initAudio();
+  playBeep(); // ← ここで必ず音が鳴る
+
+  startMotion();
+  isReady = true;
+
+  statusEl.textContent = "準備完了！振ってみて";
+  statusEl.classList.add("ready");
+});
