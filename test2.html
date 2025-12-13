@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Motion Sound Step2</title>
+<title>Motion Sound Step3</title>
 
 <style>
 body {
@@ -95,7 +95,7 @@ small {
   <div id="status">待機中</div>
   <div id="motion">動き: ---</div>
 
-  <small>② モーション学習</small>
+  <small>③ 学習モーション検知</small>
 </div>
 
 <script>
@@ -104,14 +104,17 @@ small {
    ========================= */
 let audioCtx = null;
 let soundBuffer = null;
-
 let ready = false;
-let lastPlay = 0;
 
-/* 学習用 */
+/* 学習 */
 let isLearning = false;
 let learnData = [];
+let learnedPattern = null;
 let learnStart = 0;
+
+/* 検知 */
+let detectBuffer = [];
+let lastTrigger = 0;
 
 /* =========================
    DOM
@@ -132,24 +135,19 @@ function initAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
 }
 
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) return;
-
   initAudio();
-
   try {
     const ab = await file.arrayBuffer();
     soundBuffer = await audioCtx.decodeAudioData(ab.slice(0));
     statusEl.textContent = "音源読み込み完了";
-  } catch (e) {
+  } catch {
     statusEl.textContent = "音源読み込み失敗";
-    console.error(e);
   }
 });
 
@@ -162,7 +160,7 @@ function playSound() {
 }
 
 /* =========================
-   Motion permission
+   Permission
    ========================= */
 async function requestPermission() {
   if (
@@ -170,20 +168,38 @@ async function requestPermission() {
     typeof DeviceMotionEvent.requestPermission === "function"
   ) {
     const res = await DeviceMotionEvent.requestPermission();
-    if (res !== "granted") {
-      statusEl.textContent = "センサー許可が必要";
-      return false;
-    }
+    return res === "granted";
   }
   return true;
 }
 
 /* =========================
-   学習開始
+   Utility
+   ========================= */
+function resample(arr, len) {
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    const t = i * (arr.length - 1) / (len - 1);
+    const i0 = Math.floor(t);
+    const i1 = Math.ceil(t);
+    out.push(i0 === i1 ? arr[i0] : arr[i0] + (arr[i1] - arr[i0]) * (t - i0));
+  }
+  return out;
+}
+
+function distance(a, b) {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) {
+    d += Math.abs(a[i] - b[i]);
+  }
+  return d / a.length;
+}
+
+/* =========================
+   学習
    ========================= */
 learnBtn.addEventListener("click", () => {
   if (!ready) return;
-
   learnData = [];
   isLearning = true;
   learnStart = Date.now();
@@ -191,12 +207,8 @@ learnBtn.addEventListener("click", () => {
   learnInfoEl.textContent = "学習中…";
 });
 
-/* =========================
-   Motion
-   ========================= */
 window.addEventListener("devicemotion", (e) => {
   if (!ready) return;
-
   const acc = e.accelerationIncludingGravity;
   if (!acc) return;
 
@@ -206,30 +218,38 @@ window.addEventListener("devicemotion", (e) => {
   const power = Math.sqrt(x*x + y*y + z*z);
 
   motionEl.textContent = "動き: " + power.toFixed(2);
-
   const now = Date.now();
 
   /* 学習中 */
   if (isLearning) {
     learnData.push(power);
-
     const elapsed = now - learnStart;
-    const pct = Math.min(elapsed / 3000, 1) * 100;
-    learnBar.style.width = pct + "%";
+    learnBar.style.width = Math.min(elapsed / 3000, 1) * 100 + "%";
 
     if (elapsed >= 3000) {
       isLearning = false;
-      learnInfoEl.textContent = "学習完了（" + learnData.length + "点）";
-      statusEl.textContent = "学習完了";
+      learnedPattern = resample(learnData, 60);
+      learnInfoEl.textContent = "学習完了";
+      statusEl.textContent = "検知待機中";
     }
     return;
   }
 
-  /* 仮の再生（後で削除） */
-  if (power > 18 && now - lastPlay > 600) {
-    lastPlay = now;
-    playSound();
-    statusEl.textContent = "再生!";
+  /* 検知 */
+  if (!learnedPattern) return;
+
+  detectBuffer.push(power);
+  if (detectBuffer.length > 60) detectBuffer.shift();
+
+  if (detectBuffer.length === 60 && now - lastTrigger > 1200) {
+    const cur = resample(detectBuffer, 60);
+    const diff = distance(cur, learnedPattern);
+
+    if (diff < 2.5) {
+      lastTrigger = now;
+      playSound();
+      statusEl.textContent = "学習動作 検出！";
+    }
   }
 });
 
@@ -238,15 +258,15 @@ window.addEventListener("devicemotion", (e) => {
    ========================= */
 startBtn.addEventListener("click", async () => {
   if (ready) return;
-
   const ok = await requestPermission();
-  if (!ok) return;
-
+  if (!ok) {
+    statusEl.textContent = "センサー許可が必要";
+    return;
+  }
   initAudio();
   ready = true;
-
-  statusEl.textContent = "準備完了";
   startBtn.disabled = true;
+  statusEl.textContent = "準備完了";
 });
 </script>
 </body>
