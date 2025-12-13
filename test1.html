@@ -3,260 +3,196 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Motion Sound — 完全版（安定動作）</title>
-
+<title>Motion Sound — 学習専用検知版</title>
 <style>
-:root{--bg:#fff;--card:#f8f9fb;--muted:#666;--accent:#0b84ff}
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,"Noto Sans JP";margin:0;background:var(--bg);color:#111}
-.wrap{max-width:960px;margin:18px auto;padding:18px}
-h1{font-size:20px;margin:0 0 12px}
-.grid{display:grid;grid-template-columns:1fr 360px;gap:14px}
-.card{background:#fff;border:1px solid #e6e9ef;padding:14px;border-radius:10px}
-.controls{display:flex;gap:8px;flex-wrap:wrap}
-button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:8px;font-weight:600}
-button.ghost{background:#eee;color:#222}
-label{display:block;font-size:13px;color:var(--muted);margin-top:8px}
-input,select{width:100%;padding:8px;border-radius:8px;border:1px solid #ddd}
-#log{height:120px;overflow:auto;background:#0f1724;color:#d1d5db;padding:8px;border-radius:8px;font-family:monospace;font-size:12px}
-canvas{width:100%;height:120px;background:#0b1220;border-radius:6px}
-ul{list-style:none;padding:0;margin:0}
-li{padding:6px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;gap:6px}
-.smallbtn{padding:4px 6px;border-radius:6px;border:1px solid #ccc;background:#fff}
-.badge{padding:4px 8px;border-radius:8px;background:#e5e7eb;font-size:12px}
-.progress{height:8px;background:#eee;border-radius:6px;overflow:hidden}
-.progress i{display:block;height:100%;width:0;background:var(--accent)}
+:root{--accent:#0b84ff}
+body{font-family:system-ui;margin:0;background:#fff}
+.wrap{max-width:900px;margin:auto;padding:16px}
+.card{border:1px solid #ddd;border-radius:10px;padding:14px;margin-bottom:14px}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:600}
+button.ghost{background:#eee;color:#111}
+canvas{width:100%;height:100px;background:#081017;border-radius:6px}
+#log{background:#000;color:#0f0;height:120px;overflow:auto;font-size:12px;padding:6px}
+.badge{padding:4px 8px;border-radius:6px;background:#eee;font-size:13px}
 </style>
 </head>
-
 <body>
 <div class="wrap">
-<h1>Motion Sound — 完全版（安定動作）</h1>
 
-<div class="grid">
-<!-- ================= 左 ================= -->
+<h2>Motion Sound — 学習パターン検知のみ</h2>
+
 <div class="card">
-
-<h3>① 準備</h3>
-<div class="controls">
-<button id="initBtn">開始（必ず最初にタップ）</button>
-<button id="startBtn" class="ghost" disabled>検知開始</button>
-<button id="stopBtn" class="ghost" disabled>停止</button>
+<button id="initBtn">開始（許可）</button>
+<button id="startDetectBtn" class="ghost" disabled>検知開始</button>
+<button id="stopDetectBtn" class="ghost" disabled>停止</button>
+<div id="status">状態: 待機</div>
 </div>
 
-<hr>
-
-<h3>② 音源登録</h3>
-<input type="file" id="fileInput" multiple accept="audio/*">
-<select id="motionSelect">
-<option value="shake">シェイク</option>
-<option value="x">X軸</option>
-<option value="y">Y軸</option>
-<option value="z">Z軸</option>
-<option value="learned">学習</option>
-</select>
-<button id="addFileBtn">登録</button>
-
-<ul id="soundList"></ul>
-
-<hr>
-
-<h3>③ 感度</h3>
-<label>シェイク<input type="range" id="shakeTh" min="2" max="10" step="0.1" value="4"></label>
-<label>軸<input type="range" id="axisTh" min="1" max="6" step="0.1" value="2"></label>
-<label>学習<input type="range" id="matchTh" min="0.5" max="8" step="0.1" value="2.5"></label>
-<label>音量<input type="range" id="vol" min="0" max="1" step="0.01" value="0.8"></label>
-
-<hr>
-
-<h3>④ モーション学習</h3>
+<div class="card">
+<h3>学習</h3>
 <input id="patternName" placeholder="パターン名">
-<div class="controls">
-<button id="learnBtn">学習開始（3秒）</button>
-<span class="badge" id="learnState">待機</span>
-</div>
-<div class="progress"><i id="learnProg"></i></div>
-<div id="learnInfo" class="badge">記録数: 0</div>
-<canvas id="learnViz"></canvas>
+<button id="startLearn">学習開始（3秒）</button>
 <button id="savePattern" class="ghost">保存</button>
-
-<h4>保存済み</h4>
-<ul id="patternList"></ul>
-
+<div class="badge" id="learnState">未学習</div>
+<canvas id="preview"></canvas>
 </div>
 
-<!-- ================= 右 ================= -->
 <div class="card">
-<div id="status">待機</div>
-<canvas id="viz"></canvas>
+<h3>ログ</h3>
 <div id="log"></div>
-</div>
-
-</div>
 </div>
 
 <script>
 /* ========= Audio ========= */
-let audioCtx=null, masterGain=null;
-const sounds={shake:[],x:[],y:[],z:[],learned:[]};
-
+let audioCtx;
 function initAudio(){
- if(audioCtx) return;
- audioCtx=new (window.AudioContext||window.webkitAudioContext)();
- masterGain=audioCtx.createGain();
- masterGain.gain.value=document.getElementById('vol').value;
- masterGain.connect(audioCtx.destination);
+ if(!audioCtx){
+  audioCtx=new (AudioContext||webkitAudioContext)();
+ }
 }
-
-async function unlockAudio(){
+function playBeep(){
  initAudio();
- if(audioCtx.state!=='running') await audioCtx.resume();
- const b=audioCtx.createBuffer(1,1,audioCtx.sampleRate);
- const s=audioCtx.createBufferSource();
- s.buffer=b; s.connect(masterGain); s.start();
- log('Audio unlocked');
+ const o=audioCtx.createOscillator();
+ const g=audioCtx.createGain();
+ o.frequency.value=440;
+ g.gain.value=0.2;
+ o.connect(g).connect(audioCtx.destination);
+ o.start();
+ o.stop(audioCtx.currentTime+0.15);
 }
 
-function play(buf){
- if(!buf) return;
- if(audioCtx.state!=='running') audioCtx.resume();
- const s=audioCtx.createBufferSource();
- s.buffer=buf; s.connect(masterGain); s.start();
+/* ========= State ========= */
+let isDetecting=false;
+let isLearning=false;
+let currentLearn=[];
+let lastTrigger=0;
+
+/* ========= Storage ========= */
+function loadPatterns(){
+ return JSON.parse(localStorage.getItem('motionPatterns')||'[]');
+}
+function savePattern(name,data){
+ const p=loadPatterns();
+ p.push({name,data});
+ localStorage.setItem('motionPatterns',JSON.stringify(p));
 }
 
 /* ========= Utils ========= */
-const logEl=id=>document.getElementById(id);
-function log(t){logEl('log').innerHTML=`${new Date().toLocaleTimeString()} ${t}<br>`+logEl('log').innerHTML;}
-function status(t){logEl('status').textContent=`状態: ${t} / Audio:${audioCtx?audioCtx.state:'none'}`}
-
-/* ========= Sound Register ========= */
-logEl('addFileBtn').onclick=async()=>{
- initAudio();
- for(const f of logEl('fileInput').files){
-  const ab=await f.arrayBuffer();
-  const buf=await audioCtx.decodeAudioData(ab);
-  sounds[logEl('motionSelect').value].push(buf);
-  log(`登録 ${f.name}`);
- }
- renderSounds();
+function resample(arr,n){
+ if(arr.length===0)return new Array(n).fill(0);
+ return [...Array(n)].map((_,i)=>{
+  const t=i*(arr.length-1)/(n-1);
+  const lo=Math.floor(t),hi=Math.ceil(t);
+  return lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo);
+ });
 }
-
-function renderSounds(){
- const ul=logEl('soundList'); ul.innerHTML='';
- for(const k in sounds){
-  sounds[k].forEach((_,i)=>{
-   const li=document.createElement('li');
-   li.textContent=`${k}[${i}]`;
-   const b=document.createElement('button');
-   b.textContent='▶'; b.className='smallbtn';
-   b.onclick=()=>play(sounds[k][i]);
-   li.appendChild(b); ul.appendChild(li);
-  });
- }
-}
-
-/* ========= Motion & Learning ========= */
-let detecting=false, learning=false, learnData=[];
-let vizBuf=[], lastTrig={};
-
 function dtw(a,b){
- const n=a.length,m=b.length,inf=1e9;
- const d=Array(n+1).fill().map(()=>Array(m+1).fill(inf));
- d[0][0]=0;
- for(let i=1;i<=n;i++)for(let j=1;j<=m;j++)
-  d[i][j]=Math.abs(a[i-1]-b[j-1])+Math.min(d[i-1][j],d[i][j-1],d[i-1][j-1]);
- return d[n][m]/(n+m);
+ const n=a.length,m=b.length;
+ const D=Array.from({length:n+1},()=>Array(m+1).fill(1e9));
+ D[0][0]=0;
+ for(let i=1;i<=n;i++)
+  for(let j=1;j<=m;j++){
+   const c=Math.abs(a[i-1]-b[j-1]);
+   D[i][j]=c+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
+  }
+ return D[n][m]/(n+m);
 }
 
+/* ========= Learning ========= */
+const preview=document.getElementById('preview');
+const pctx=preview.getContext('2d');
+
+document.getElementById('startLearn').onclick=()=>{
+ currentLearn=[];
+ isLearning=true;
+ document.getElementById('learnState').textContent='学習中';
+ setTimeout(()=>{
+  isLearning=false;
+  document.getElementById('learnState').textContent=`記録:${currentLearn.length}`;
+  draw(currentLearn);
+ },3000);
+};
+
+document.getElementById('savePattern').onclick=()=>{
+ if(currentLearn.length<10){alert('短すぎます');return;}
+ savePattern(
+  document.getElementById('patternName').value||'pattern',
+  resample(currentLearn,60)
+ );
+ log('保存完了');
+};
+
+/* ========= Detection ========= */
 window.addEventListener('devicemotion',e=>{
- if(!detecting) return;
- const a=e.accelerationIncludingGravity; if(!a) return;
- const t=Math.hypot(a.x,a.y,a.z);
- vizBuf.push(t); if(vizBuf.length>200) vizBuf.shift();
+ const a=e.accelerationIncludingGravity;
+ if(!a)return;
+ const v=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
 
- if(learning) learnData.push(t);
+ if(isLearning) currentLearn.push(v);
 
- const now=Date.now();
- const cd=600;
+ if(!isDetecting) return;
 
- if(t>logEl('shakeTh').value && now-(lastTrig.s||0)>cd){
-  lastTrig.s=now;
-  if(sounds.shake[0]) play(sounds.shake[0]);
- }
+ const patterns=loadPatterns();
+ if(patterns.length===0) return;
 
- const pats=JSON.parse(localStorage.getItem('patterns')||'[]');
- if(pats.length){
-  const cur=vizBuf.slice(-60);
-  pats.forEach(p=>{
-   if(dtw(cur,p.data)<logEl('matchTh').value){
-    play(sounds.learned[p.sound]);
-   }
-  });
+ const candidate=resample(currentLearn.slice(-240),60);
+ let best=Infinity;
+ let name='';
+ patterns.forEach(p=>{
+  const s=dtw(candidate,p.data);
+  if(s<best){best=s;name=p.name;}
+ });
+
+ if(best<2.5 && Date.now()-lastTrigger>1000){
+  lastTrigger=Date.now();
+  playBeep();
+  document.getElementById('status').textContent=`検知: ${name} (${best.toFixed(2)})`;
+  log('検知 '+name);
  }
 });
 
-/* ========= Learning ========= */
-logEl('learnBtn').onclick=()=>{
- learning=true; learnData=[];
- logEl('learnState').textContent='学習中';
- let t=0;
- const iv=setInterval(()=>{
-  t+=100;
-  logEl('learnProg').style.width=`${t/30}%`;
-  logEl('learnInfo').textContent=`記録数:${learnData.length}`;
-  if(t>=3000){
-   clearInterval(iv); learning=false;
-   logEl('learnState').textContent='完了';
-  }
- },100);
-}
-
-logEl('savePattern').onclick=()=>{
- const name=logEl('patternName').value;
- if(!name||learnData.length<10) return;
- const pats=JSON.parse(localStorage.getItem('patterns')||'[]');
- pats.push({name,data:learnData.slice(-60),sound:0});
- localStorage.setItem('patterns',JSON.stringify(pats));
- renderPatterns();
-}
-
-function renderPatterns(){
- const ul=logEl('patternList'); ul.innerHTML='';
- const pats=JSON.parse(localStorage.getItem('patterns')||'[]');
- pats.forEach(p=>{
-  const li=document.createElement('li');
-  li.textContent=p.name; ul.appendChild(li);
- });
-}
-
-/* ========= Buttons ========= */
-logEl('initBtn').onclick=async()=>{
- await unlockAudio();
+/* ========= UI ========= */
+document.getElementById('initBtn').onclick=async()=>{
+ initAudio();
  if(DeviceMotionEvent?.requestPermission){
   const r=await DeviceMotionEvent.requestPermission();
-  if(r!=='granted') return alert('許可が必要');
+  if(r!=='granted'){alert('許可必要');return;}
  }
- logEl('startBtn').disabled=false;
- status('準備完了');
+ document.getElementById('startDetectBtn').disabled=false;
+ log('許可OK');
+};
+
+document.getElementById('startDetectBtn').onclick=()=>{
+ isDetecting=true;
+ document.getElementById('stopDetectBtn').disabled=false;
+ document.getElementById('startDetectBtn').disabled=true;
+ document.getElementById('status').textContent='学習パターン検知中';
+};
+
+document.getElementById('stopDetectBtn').onclick=()=>{
+ isDetecting=false;
+ document.getElementById('stopDetectBtn').disabled=true;
+ document.getElementById('startDetectBtn').disabled=false;
+ document.getElementById('status').textContent='停止';
+};
+
+function draw(a){
+ preview.width=preview.clientWidth*devicePixelRatio;
+ preview.height=preview.clientHeight*devicePixelRatio;
+ pctx.clearRect(0,0,preview.width,preview.height);
+ pctx.strokeStyle='#0f0';
+ pctx.beginPath();
+ a.forEach((v,i)=>{
+  const x=i*preview.width/(a.length-1);
+  const y=preview.height-v*10;
+  i?pctx.lineTo(x,y):pctx.moveTo(x,y);
+ });
+ pctx.stroke();
 }
-
-logEl('startBtn').onclick=async()=>{
- await unlockAudio();
- detecting=true;
- logEl('startBtn').disabled=true;
- logEl('stopBtn').disabled=false;
- status('検知中');
+function log(t){
+ document.getElementById('log').innerHTML=`${t}<br>`+document.getElementById('log').innerHTML;
 }
-
-logEl('stopBtn').onclick=()=>{
- detecting=false;
- logEl('startBtn').disabled=false;
- logEl('stopBtn').disabled=true;
- status('停止');
-}
-
-logEl('vol').oninput=e=>{ if(masterGain) masterGain.gain.value=e.target.value }
-
-renderPatterns();
 </script>
+</div>
 </body>
 </html>
