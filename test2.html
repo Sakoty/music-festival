@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Motion Sound Step1</title>
+<title>Motion Sound Step2</title>
 
 <style>
 body {
@@ -20,13 +20,12 @@ body {
   background: #1b1f2a;
   border-radius: 18px;
   padding: 26px;
-  width: 330px;
+  width: 360px;
   box-shadow: 0 20px 40px rgba(0,0,0,.5);
-  text-align: center;
 }
 h1 {
   font-size: 18px;
-  margin-bottom: 12px;
+  text-align: center;
 }
 button {
   padding: 10px 16px;
@@ -37,9 +36,12 @@ button {
   font-weight: 600;
   cursor: pointer;
 }
+button.sub {
+  background: #2b3245;
+}
 input[type=file] {
-  margin-top: 10px;
   width: 100%;
+  margin-top: 10px;
 }
 #status {
   margin-top: 10px;
@@ -47,15 +49,32 @@ input[type=file] {
   color: #9ee7ff;
 }
 #motion {
-  margin-top: 10px;
+  margin-top: 6px;
   font-size: 13px;
   color: #aaa;
 }
-.ready { color: #7CFF7C; }
-.detect { color: #FFD479; }
+#learnInfo {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #7CFF7C;
+}
+.bar {
+  height: 8px;
+  background: #333;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.bar i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: #0b84ff;
+}
 small {
   display: block;
   margin-top: 10px;
+  text-align: center;
   color: #777;
 }
 </style>
@@ -68,10 +87,15 @@ small {
   <button id="startBtn">開始</button>
   <input id="audioFile" type="file" accept="audio/*">
 
+  <button id="learnBtn" class="sub">学習開始（3秒）</button>
+
+  <div class="bar"><i id="learnBar"></i></div>
+  <div id="learnInfo">未学習</div>
+
   <div id="status">待機中</div>
   <div id="motion">動き: ---</div>
 
-  <small>① mp3対応 / 次: 学習</small>
+  <small>② モーション学習</small>
 </div>
 
 <script>
@@ -80,19 +104,29 @@ small {
    ========================= */
 let audioCtx = null;
 let soundBuffer = null;
+
 let ready = false;
 let lastPlay = 0;
+
+/* 学習用 */
+let isLearning = false;
+let learnData = [];
+let learnStart = 0;
 
 /* =========================
    DOM
    ========================= */
 const startBtn = document.getElementById("startBtn");
 const fileInput = document.getElementById("audioFile");
+const learnBtn = document.getElementById("learnBtn");
+
 const statusEl = document.getElementById("status");
 const motionEl = document.getElementById("motion");
+const learnInfoEl = document.getElementById("learnInfo");
+const learnBar = document.getElementById("learnBar");
 
 /* =========================
-   Audio 初期化
+   Audio
    ========================= */
 function initAudio() {
   if (!audioCtx) {
@@ -103,9 +137,6 @@ function initAudio() {
   }
 }
 
-/* =========================
-   mp3 読み込み
-   ========================= */
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) return;
@@ -113,22 +144,17 @@ fileInput.addEventListener("change", async () => {
   initAudio();
 
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    soundBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+    const ab = await file.arrayBuffer();
+    soundBuffer = await audioCtx.decodeAudioData(ab.slice(0));
     statusEl.textContent = "音源読み込み完了";
-    statusEl.classList.add("ready");
   } catch (e) {
-    statusEl.textContent = "音源の読み込みに失敗";
+    statusEl.textContent = "音源読み込み失敗";
     console.error(e);
   }
 });
 
-/* =========================
-   再生
-   ========================= */
 function playSound() {
   if (!audioCtx || !soundBuffer) return;
-
   const src = audioCtx.createBufferSource();
   src.buffer = soundBuffer;
   src.connect(audioCtx.destination);
@@ -136,7 +162,7 @@ function playSound() {
 }
 
 /* =========================
-   モーション許可
+   Motion permission
    ========================= */
 async function requestPermission() {
   if (
@@ -153,35 +179,62 @@ async function requestPermission() {
 }
 
 /* =========================
-   モーション検知
+   学習開始
    ========================= */
-function startMotion() {
-  window.addEventListener("devicemotion", (e) => {
-    if (!ready || !soundBuffer) return;
+learnBtn.addEventListener("click", () => {
+  if (!ready) return;
 
-    const acc = e.accelerationIncludingGravity;
-    if (!acc) return;
-
-    const x = acc.x || 0;
-    const y = acc.y || 0;
-    const z = acc.z || 0;
-    const power = Math.sqrt(x*x + y*y + z*z);
-
-    motionEl.textContent = "動き: " + power.toFixed(2);
-
-    const now = Date.now();
-    if (power > 18 && now - lastPlay > 600) {
-      lastPlay = now;
-      playSound();
-      statusEl.textContent = "再生!";
-      statusEl.classList.add("detect");
-      setTimeout(() => statusEl.classList.remove("detect"), 200);
-    }
-  }, { passive: true });
-}
+  learnData = [];
+  isLearning = true;
+  learnStart = Date.now();
+  learnBar.style.width = "0%";
+  learnInfoEl.textContent = "学習中…";
+});
 
 /* =========================
-   開始
+   Motion
+   ========================= */
+window.addEventListener("devicemotion", (e) => {
+  if (!ready) return;
+
+  const acc = e.accelerationIncludingGravity;
+  if (!acc) return;
+
+  const x = acc.x || 0;
+  const y = acc.y || 0;
+  const z = acc.z || 0;
+  const power = Math.sqrt(x*x + y*y + z*z);
+
+  motionEl.textContent = "動き: " + power.toFixed(2);
+
+  const now = Date.now();
+
+  /* 学習中 */
+  if (isLearning) {
+    learnData.push(power);
+
+    const elapsed = now - learnStart;
+    const pct = Math.min(elapsed / 3000, 1) * 100;
+    learnBar.style.width = pct + "%";
+
+    if (elapsed >= 3000) {
+      isLearning = false;
+      learnInfoEl.textContent = "学習完了（" + learnData.length + "点）";
+      statusEl.textContent = "学習完了";
+    }
+    return;
+  }
+
+  /* 仮の再生（後で削除） */
+  if (power > 18 && now - lastPlay > 600) {
+    lastPlay = now;
+    playSound();
+    statusEl.textContent = "再生!";
+  }
+});
+
+/* =========================
+   Start
    ========================= */
 startBtn.addEventListener("click", async () => {
   if (ready) return;
@@ -190,10 +243,9 @@ startBtn.addEventListener("click", async () => {
   if (!ok) return;
 
   initAudio();
-  startMotion();
-
   ready = true;
-  statusEl.textContent = "準備完了（音を選択）";
+
+  statusEl.textContent = "準備完了";
   startBtn.disabled = true;
 });
 </script>
