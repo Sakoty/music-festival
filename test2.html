@@ -1,433 +1,200 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Motion Sound — 完全統合版（学習改善）</title>
-<style>
-:root{--bg:#fff;--card:#f8f9fb;--muted:#666;--accent:#0b84ff}
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN",Meiryo,"Noto Sans JP";margin:0;background:var(--bg);color:#111}
-.wrap{max-width:920px;margin:18px auto;padding:18px}
-h1{font-size:20px;margin:0 0 12px}
-.grid{display:grid;grid-template-columns:1fr 360px;gap:14px}
-.card{background:#fff;border:1px solid #e6e9ef;padding:14px;border-radius:10px;box-shadow:0 2px 6px rgba(12,12,12,0.03)}
-.controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-button{background:var(--accent);color:white;border:0;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
-button.ghost{background:#eee;color:#222}
-label{display:block;font-size:13px;color:var(--muted);margin-top:8px}
-input[type=range]{width:100%}
-select,input[type=text],input[type=file]{width:100%;padding:8px;border-radius:8px;border:1px solid #ddd}
-small{color:var(--muted)}
-#log{height:120px;overflow:auto;background:#0f1724;color:#d1d5db;padding:8px;border-radius:8px;font-family:monospace;font-size:12px}
-ul.list{list-style:none;padding:0;margin:8px 0}
-ul.list li{padding:8px;border-bottom:1px solid #f1f3f5;display:flex;justify-content:space-between;gap:8px;align-items:center}
-.muted{color:var(--muted)}
-canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
-.smallbtn{background:#fff;border:1px solid #e6e9ef;padding:6px 8px;color:#222;border-radius:6px}
-.footer{margin-top:12px;font-size:12px;color:var(--muted)}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion Sound Step1</title>
 
-/* --- 新UI: 学習状態表示 --- */
-.learn-ui { margin-top:8px; display:flex; gap:8px; align-items:center; }
-.progress { height:10px; background:#eee; border-radius:6px; overflow:hidden; width:100%; }
-.progress > i { display:block; height:100%; width:0%; background:var(--accent); transition:width 0.12s linear; }
-.badge { padding:4px 8px; border-radius:8px; background:#f1f5f9; color:#111; font-size:13px; }
-.pattern-preview { width:100%; height:56px; background:#081017; border-radius:6px; margin-top:8px; }
-.pattern-meta { font-size:12px; color:var(--muted); margin-top:6px; }
+<style>
+body {
+  margin: 0;
+  height: 100vh;
+  background: #0f1115;
+  font-family: system-ui, -apple-system, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+#app {
+  background: #1b1f2a;
+  border-radius: 18px;
+  padding: 26px;
+  width: 330px;
+  box-shadow: 0 20px 40px rgba(0,0,0,.5);
+  text-align: center;
+}
+h1 {
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+button {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  background: #0b84ff;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+input[type=file] {
+  margin-top: 10px;
+  width: 100%;
+}
+#status {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #9ee7ff;
+}
+#motion {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #aaa;
+}
+.ready { color: #7CFF7C; }
+.detect { color: #FFD479; }
+small {
+  display: block;
+  margin-top: 10px;
+  color: #777;
+}
 </style>
 </head>
+
 <body>
-<div class="wrap">
-<h1>Motion Sound — 完全統合版（学習改善）</h1>
-<div class="grid">
-  <div class="card">
-    <h3>準備 & 許可</h3>
-    <div class="controls">
-      <button id="initBtn">開始（タップして許可）</button>
-      <button id="startDetectBtn" class="ghost" disabled>検知スタート</button>
-      <button id="stopDetectBtn" class="ghost" disabled>検知停止</button>
-    </div>
-    <p class="muted">iPhone は必ずタップ内で許可が必要。</p>
+<div id="app">
+  <h1>Motion Sound</h1>
 
-    <hr/>
+  <button id="startBtn">開始</button>
+  <input id="audioFile" type="file" accept="audio/*">
 
-    <h3>音ファイル（複数可 / ローカル）</h3>
-    <input id="fileInput" type="file" accept="audio/*" multiple>
-    <label>外部音源URL<input id="urlInput" type="text" placeholder="例: https://.../sound.mp3"></label>
-    <button id="addUrlBtn">URL登録</button>
+  <div id="status">待機中</div>
+  <div id="motion">動き: ---</div>
 
-    <select id="motionSelect">
-      <option value="shake">強いシェイク</option>
-      <option value="x">左右(X)</option>
-      <option value="y">上下(Y)</option>
-      <option value="z">前後(Z)</option>
-      <option value="learned">学習パターン</option>
-    </select>
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button id="assignFiles">登録</button>
-      <button id="clearMotionSounds" class="ghost">選択モーションの音をクリア</button>
-    </div>
-    <p id="assignMsg" class="muted"></p>
-
-    <hr/>
-
-    <h3>登録音一覧</h3>
-    <ul id="soundLists" class="list"></ul>
-
-    <hr/>
-
-    <h3>感度・設定</h3>
-    <label>シェイク閾値<input id="shakeThresh" type="range" min="1.5" max="10" step="0.1" value="4"></label>
-    <label>軸閾値<input id="axisThresh" type="range" min="0.5" max="6" step="0.1" value="2"></label>
-    <label>学習マッチ閾値<input id="matchThresh" type="range" min="0.1" max="10" step="0.1" value="2.5"></label>
-    <label>トリガー冷却(ms)<input id="cooldown" type="range" min="200" max="5000" step="100" value="800"></label>
-    <label>マスター音量<input id="masterVol" type="range" min="0" max="1" step="0.01" value="0.8"></label>
-
-    <hr/>
-
-    <h3>モーション学習</h3>
-    <label>パターン名 <input id="patternName" type="text" placeholder="例: 2回縦に振る"></label>
-    <label>学習パターン用の音 
-      <select id="learnSoundSelect"></select>
-    </label>
-
-    <div class="learn-ui">
-      <button id="startLearn">学習開始（3秒）</button>
-      <div class="progress" title="学習進捗"><i id="learnProgress"></i></div>
-      <div class="badge" id="learnState">待機</div>
-    </div>
-
-    <div class="pattern-meta" id="learnInfo">記録数: 0</div>
-    <canvas id="patternPreview" class="pattern-preview"></canvas>
-
-    <div style="display:flex;gap:8px;margin-top:8px">
-      <button id="savePattern" class="ghost">保存</button>
-      <button id="testPattern" class="ghost">テスト再生</button>
-    </div>
-
-    <hr/>
-    <h3>保存パターン</h3>
-    <ul id="patternList" class="list"></ul>
-  </div>
-
-  <div class="card">
-    <h3>状態</h3>
-    <div id="status">ステータス: 待機中</div>
-    <h4>リアルタイム可視化</h4>
-    <canvas id="viz"></canvas>
-    <h4>ログ</h4>
-    <div id="log"></div>
-    <div class="footer">ヒント: iPhoneは画面タップ内で「開始」を押してください。</div>
-  </div>
-</div>
+  <small>① mp3対応 / 次: 学習</small>
 </div>
 
 <script>
-/* =========================================================
-   Motion Sound System — JS 完全版（保存対応）
-   ========================================================= */
-
-/* ---------- 定数 ---------- */
-const STORAGE_KEY = 'motionSoundPatterns_v1';
-const SAMPLE_INTERVAL_MS = 25;
-const LEARN_DURATION_MS = 3000;
-
-/* ---------- Audio ---------- */
+/* =========================
+   状態
+   ========================= */
 let audioCtx = null;
-const master = { gainNode: null, vol: 0.8 };
+let soundBuffer = null;
+let ready = false;
+let lastPlay = 0;
 
-/* ---------- 状態 ---------- */
-let isDetecting = false;
-let isLearning = false;
-let learnStartAt = 0;
-let lastSampleTime = 0;
-let currentLearn = [];
-let vizBuffer = [];
-let lastTriggeredAt = {};
+/* =========================
+   DOM
+   ========================= */
+const startBtn = document.getElementById("startBtn");
+const fileInput = document.getElementById("audioFile");
+const statusEl = document.getElementById("status");
+const motionEl = document.getElementById("motion");
 
-/* ---------- データ ---------- */
-const soundMap = { shake: [], x: [], y: [], z: [], learned: [] };
-
-/* ---------- Audio 初期化 ---------- */
-function initAudioIfNeeded(){
-  if(audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  master.gainNode = audioCtx.createGain();
-  master.gainNode.gain.value = master.vol;
-  master.gainNode.connect(audioCtx.destination);
-
-  document.addEventListener('touchstart', ()=>audioCtx.resume(), { once:true });
-  document.addEventListener('click', ()=>audioCtx.resume(), { once:true });
-
-  log('AudioContext 初期化');
+/* =========================
+   Audio 初期化
+   ========================= */
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
 }
 
-/* ---------- Audio Decode 安定化 ---------- */
-function decodeAudioSafe(arrayBuffer){
-  initAudioIfNeeded();
-  return new Promise((resolve,reject)=>{
-    try{
-      const p = audioCtx.decodeAudioData(
-        arrayBuffer.slice(0),
-        buf=>resolve(buf),
-        err=>reject(err)
-      );
-      if(p && p.then) p.then(resolve).catch(reject);
-    }catch(e){ reject(e); }
-  });
-}
+/* =========================
+   mp3 読み込み
+   ========================= */
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
 
-/* ---------- 再生 ---------- */
-function playBuffer(buf){
-  if(!buf) return;
-  if(audioCtx.state === 'suspended') audioCtx.resume();
+  initAudio();
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    soundBuffer = await audioCtx.decodeAudioData(arrayBuffer.slice(0));
+    statusEl.textContent = "音源読み込み完了";
+    statusEl.classList.add("ready");
+  } catch (e) {
+    statusEl.textContent = "音源の読み込みに失敗";
+    console.error(e);
+  }
+});
+
+/* =========================
+   再生
+   ========================= */
+function playSound() {
+  if (!audioCtx || !soundBuffer) return;
+
   const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-  src.connect(master.gainNode);
+  src.buffer = soundBuffer;
+  src.connect(audioCtx.destination);
   src.start();
 }
 
-/* ---------- 保存用 Audio 変換 ---------- */
-function serializeAudioBuffer(buf){
-  return {
-    sampleRate: buf.sampleRate,
-    data: Array.from(buf.getChannelData(0))
-  };
-}
-
-function restoreAudioBuffer(saved){
-  initAudioIfNeeded();
-  const buf = audioCtx.createBuffer(
-    1,
-    saved.audio.data.length,
-    saved.audio.sampleRate
-  );
-  buf.getChannelData(0).set(saved.audio.data);
-  return buf;
-}
-
-/* ---------- DTW ---------- */
-function dtwDistance(a,b){
-  const n=a.length, m=b.length;
-  const INF=1e9;
-  const D = Array.from({length:n+1},()=>Array(m+1).fill(INF));
-  D[0][0]=0;
-  for(let i=1;i<=n;i++){
-    for(let j=1;j<=m;j++){
-      const cost=Math.abs(a[i-1]-b[j-1]);
-      D[i][j]=cost+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
+/* =========================
+   モーション許可
+   ========================= */
+async function requestPermission() {
+  if (
+    typeof DeviceMotionEvent !== "undefined" &&
+    typeof DeviceMotionEvent.requestPermission === "function"
+  ) {
+    const res = await DeviceMotionEvent.requestPermission();
+    if (res !== "granted") {
+      statusEl.textContent = "センサー許可が必要";
+      return false;
     }
   }
-  return D[n][m]/(n+m);
+  return true;
 }
 
-/* ---------- リサンプル ---------- */
-function resample(arr,target){
-  if(arr.length===0) return Array(target).fill(0);
-  const out=[];
-  for(let i=0;i<target;i++){
-    const t=i*(arr.length-1)/(target-1);
-    const lo=Math.floor(t), hi=Math.ceil(t);
-    out.push(lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo));
-  }
-  return out;
-}
+/* =========================
+   モーション検知
+   ========================= */
+function startMotion() {
+  window.addEventListener("devicemotion", (e) => {
+    if (!ready || !soundBuffer) return;
 
-/* ---------- 学習開始 ---------- */
-startLearn.onclick = ()=>{
-  if(isLearning) return;
-  currentLearn=[];
-  isLearning=true;
-  learnStartAt=Date.now();
-  lastSampleTime=0;
-  learnState.textContent='録音中';
-  learnProgress.style.width='0%';
-  log('学習開始');
+    const acc = e.accelerationIncludingGravity;
+    if (!acc) return;
 
-  const timer=setInterval(()=>{
-    const p=(Date.now()-learnStartAt)/LEARN_DURATION_MS*100;
-    learnProgress.style.width=Math.min(p,100)+'%';
-    if(p>=100){
-      clearInterval(timer);
-      isLearning=false;
-      learnState.textContent='完了';
-      log(`学習完了 (${currentLearn.length})`);
+    const x = acc.x || 0;
+    const y = acc.y || 0;
+    const z = acc.z || 0;
+    const power = Math.sqrt(x*x + y*y + z*z);
+
+    motionEl.textContent = "動き: " + power.toFixed(2);
+
+    const now = Date.now();
+    if (power > 18 && now - lastPlay > 600) {
+      lastPlay = now;
+      playSound();
+      statusEl.textContent = "再生!";
+      statusEl.classList.add("detect");
+      setTimeout(() => statusEl.classList.remove("detect"), 200);
     }
-  },50);
-};
-
-/* ---------- 保存 ---------- */
-savePattern.onclick = ()=>{
-  const name = patternName.value.trim();
-  if(!name || currentLearn.length<12){
-    alert('学習不足');
-    return;
-  }
-  const sel = learnSoundSelect.value;
-  if(!sel){ alert('音を選択'); return; }
-
-  const [motion, idx] = sel.split('|');
-  const src = soundMap[motion][idx];
-
-  const data = {
-    name,
-    motion: resample(currentLearn,60),
-    audio: serializeAudioBuffer(src.buf),
-    audioName: src.name,
-    created: Date.now()
-  };
-
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
-  saved.push(data);
-  localStorage.setItem(STORAGE_KEY,JSON.stringify(saved));
-  refreshPatternList();
-  log(`保存: ${name}`);
-};
-
-/* ---------- 再生 ---------- */
-function playPatternSound(p){
-  const buf = restoreAudioBuffer(p);
-  playBuffer(buf);
+  }, { passive: true });
 }
 
-/* ---------- Pattern List ---------- */
-function refreshPatternList(){
-  patternList.innerHTML='';
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
-  saved.forEach((p,i)=>{
-    const li=document.createElement('li');
-    li.innerHTML=`<strong>${p.name}</strong><small>${p.audioName}</small>`;
-    const btn=document.createElement('button');
-    btn.textContent='▶';
-    btn.onclick=()=>playPatternSound(p);
-    li.appendChild(btn);
-    patternList.appendChild(li);
-  });
-}
+/* =========================
+   開始
+   ========================= */
+startBtn.addEventListener("click", async () => {
+  if (ready) return;
 
-/* ---------- DeviceMotion ---------- */
-window.addEventListener('devicemotion',e=>{
-  const a=e.accelerationIncludingGravity;
-  if(!a) return;
-  const t=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
-  vizBuffer.push(t);
-  if(vizBuffer.length>240) vizBuffer.shift();
+  const ok = await requestPermission();
+  if (!ok) return;
 
-  const now=Date.now();
+  initAudio();
+  startMotion();
 
-  if(isLearning){
-    if(now-lastSampleTime>SAMPLE_INTERVAL_MS){
-      currentLearn.push(t);
-      lastSampleTime=now;
-    }
-    return;
-  }
-
-  if(!isDetecting) return;
-
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
-  if(saved.length===0) return;
-
-  const candidate=resample(vizBuffer.slice(-240),60);
-  let best=null,bestScore=Infinity;
-  saved.forEach(p=>{
-    const s=dtwDistance(candidate,p.motion);
-    if(s<bestScore){bestScore=s;best=p;}
-  });
-
-  if(best && bestScore<Number(matchThresh.value)){
-    if(now-(lastTriggeredAt.learned||0)>Number(cooldown.value)){
-      lastTriggeredAt.learned=now;
-      playPatternSound(best);
-      status(`検出: ${best.name}`);
-    }
-  }
-});
-
-/* ---------- 許可 ---------- */
-initBtn.onclick=async()=>{
-  initAudioIfNeeded();
-  if(DeviceMotionEvent.requestPermission){
-    const r=await DeviceMotionEvent.requestPermission();
-    if(r==='granted'){
-      startDetectBtn.disabled=false;
-      status('許可OK');
-    }
-  }else{
-    startDetectBtn.disabled=false;
-  }
-};
-
-/* ---------- 検知ON/OFF ---------- */
-startDetectBtn.onclick=()=>{
-  isDetecting=true;
-  startDetectBtn.disabled=true;
-  stopDetectBtn.disabled=false;
-  status('検知中');
-};
-stopDetectBtn.onclick=()=>{
-  isDetecting=false;
-  startDetectBtn.disabled=false;
-  stopDetectBtn.disabled=true;
-  status('停止');
-};
-
-/* ---------- ログ ---------- */
-function log(t){
-  const l=document.getElementById('log');
-  l.innerHTML=`[${new Date().toLocaleTimeString()}] ${t}<br>`+l.innerHTML;
-}
-function status(t){
-  document.getElementById('status').textContent='ステータス: '+t;
-}
-
-/* ---------- 初期復元 ---------- */
-window.addEventListener('load',()=>{
-  refreshPatternList();
-});
-
-  /* =========================================================
-   🔊 音ファイル登録処理（欠けていた部分）
-   ========================================================= */
-
-const fileInput = document.getElementById('fileInput');
-const motionSelect = document.getElementById('motionSelect');
-
-fileInput.addEventListener('change', async () => {
-  const files = Array.from(fileInput.files || []);
-  if (files.length === 0) return;
-
-  initAudioIfNeeded();
-
-  const motion = motionSelect.value;
-
-  for (const file of files) {
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await decodeAudioSafe(arrayBuffer);
-
-      if (!audioBuffer) {
-        log(`デコード失敗: ${file.name}`);
-        continue;
-      }
-
-      soundMap[motion].push({
-        name: file.name,
-        buf: audioBuffer
-      });
-
-      log(`音登録成功: ${file.name} → ${motion}`);
-    } catch (e) {
-      console.error(e);
-      log(`音登録エラー: ${file.name}`);
-    }
-  }
-
-  // UI更新
-  refreshLearnSoundSelect();
-  refreshSoundLists();
-
-  // 同じファイルを再選択できるようにクリア
-  fileInput.value = '';
+  ready = true;
+  statusEl.textContent = "準備完了（音を選択）";
+  startBtn.disabled = true;
 });
 </script>
 </body>
