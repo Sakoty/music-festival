@@ -1,77 +1,93 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Motion Sound Minimal</title>
+
+<style>
+body {
+  margin: 0;
+  height: 100vh;
+  background: #0f1115;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+#app {
+  background: #1b1f2a;
+  border-radius: 18px;
+  padding: 28px 30px;
+  width: 320px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+  text-align: center;
+}
+h1 {
+  font-size: 18px;
+  margin: 0 0 14px;
+}
+#status {
+  margin-top: 10px;
+  font-size: 14px;
+  color: #9ee7ff;
+}
+#motion {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #aaa;
+}
+#hint {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #777;
+}
+.ready {
+  color: #7CFF7C !important;
+}
+.detect {
+  color: #FFD479 !important;
+}
+button {
+  margin-top: 14px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: none;
+  background: #0b84ff;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:active {
+  transform: scale(0.97);
+}
+</style>
+</head>
+
+<body>
+<div id="app">
+  <h1>Motion Sound Test</h1>
+  <button id="startBtn">開始</button>
+  <div id="status">待機中</div>
+  <div id="motion">動き: ---</div>
+  <div id="hint">タップ後、端末を振ってください</div>
+</div>
+
 <script>
-   
- =========================
-   最小構成 Motion + Sound
-   + Style Injection
+/* =========================
+   状態管理
    ========================= */
-
-// ===== グローバル =====
 let audioCtx = null;
-let isReady = false;
-let statusEl = null;
+let ready = false;
+let lastPlay = 0;
 
 /* =========================
-   Style を JS から追加
+   DOM
    ========================= */
-(function injectStyle() {
-  const style = document.createElement("style");
-  style.textContent = `
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-      background: #111;
-      color: #fff;
-      height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #panel {
-      background: #1e1e1e;
-      border-radius: 16px;
-      padding: 24px 28px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-      text-align: center;
-      max-width: 320px;
-      width: 90%;
-    }
-    #panel h1 {
-      font-size: 18px;
-      margin: 0 0 12px;
-    }
-    #status {
-      margin-top: 12px;
-      font-size: 14px;
-      color: #9ee7ff;
-    }
-    #hint {
-      margin-top: 10px;
-      font-size: 13px;
-      color: #aaa;
-    }
-    .ready {
-      color: #7CFF7C !important;
-    }
-  `;
-  document.head.appendChild(style);
-})();
-
-/* =========================
-   UI 作成
-   ========================= */
-(function createUI() {
-  const panel = document.createElement("div");
-  panel.id = "panel";
-
-  panel.innerHTML = `
-    <h1>Motion Sound Test</h1>
-    <div id="status">画面をタップしてください</div>
-    <div id="hint">初回はセンサー許可が表示されます</div>
-  `;
-
-  document.body.appendChild(panel);
-  statusEl = document.getElementById("status");
-})();
+const startBtn = document.getElementById("startBtn");
+const statusEl = document.getElementById("status");
+const motionEl = document.getElementById("motion");
 
 /* =========================
    Audio 初期化
@@ -86,15 +102,15 @@ function initAudio() {
 }
 
 /* =========================
-   音を鳴らす（テスト用）
+   テスト音
    ========================= */
-function playBeep() {
+function playSound() {
   if (!audioCtx) return;
 
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
 
-  osc.type = "sine";
+  osc.type = "square";
   osc.frequency.value = 880;
   gain.gain.value = 0.25;
 
@@ -102,20 +118,20 @@ function playBeep() {
   gain.connect(audioCtx.destination);
 
   osc.start();
-  osc.stop(audioCtx.currentTime + 0.15);
+  osc.stop(audioCtx.currentTime + 0.12);
 }
 
 /* =========================
    モーション許可
    ========================= */
-async function requestMotionPermission() {
+async function requestPermission() {
   if (
     typeof DeviceMotionEvent !== "undefined" &&
     typeof DeviceMotionEvent.requestPermission === "function"
   ) {
     const res = await DeviceMotionEvent.requestPermission();
     if (res !== "granted") {
-      statusEl.textContent = "センサーが許可されていません";
+      statusEl.textContent = "センサー許可が必要です";
       return false;
     }
   }
@@ -123,23 +139,31 @@ async function requestMotionPermission() {
 }
 
 /* =========================
-   モーション監視
+   モーション検知
    ========================= */
 function startMotion() {
   window.addEventListener(
     "devicemotion",
     (e) => {
-      if (!isReady) return;
+      if (!ready) return;
 
-      const ax = e.accelerationIncludingGravity?.x || 0;
-      const ay = e.accelerationIncludingGravity?.y || 0;
-      const az = e.accelerationIncludingGravity?.z || 0;
+      const acc = e.accelerationIncludingGravity;
+      if (!acc) return;
 
-      const power = Math.sqrt(ax * ax + ay * ay + az * az);
+      const x = acc.x || 0;
+      const y = acc.y || 0;
+      const z = acc.z || 0;
 
-      if (power > 18) {
-        playBeep();
+      const power = Math.sqrt(x*x + y*y + z*z);
+      motionEl.textContent = "動き: " + power.toFixed(2);
+
+      const now = Date.now();
+      if (power > 18 && now - lastPlay > 500) {
+        lastPlay = now;
+        playSound();
         statusEl.textContent = "動きを検知！";
+        statusEl.classList.add("detect");
+        setTimeout(() => statusEl.classList.remove("detect"), 200);
       }
     },
     { passive: true }
@@ -147,23 +171,26 @@ function startMotion() {
 }
 
 /* =========================
-   ユーザー操作（最重要）
+   開始ボタン
    ========================= */
-document.addEventListener("click", async () => {
-  if (isReady) return;
+startBtn.addEventListener("click", async () => {
+  if (ready) return;
 
   statusEl.textContent = "準備中…";
 
-  const ok = await requestMotionPermission();
+  const ok = await requestPermission();
   if (!ok) return;
 
   initAudio();
-  playBeep(); // ← ここで必ず音が鳴る
+  playSound(); // 確実に音が鳴る確認用
 
   startMotion();
-  isReady = true;
+  ready = true;
 
-  statusEl.textContent = "準備完了！振ってみて";
+  statusEl.textContent = "準備完了";
   statusEl.classList.add("ready");
+  startBtn.disabled = true;
 });
 </script>
+</body>
+</html>
