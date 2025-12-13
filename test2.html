@@ -122,154 +122,268 @@ canvas#viz{width:100%;height:120px;background:#0b1220;border-radius:6px}
 </div>
 
 <script>
-/* =========================
-   グローバル状態
-   ========================= */
-let audioCtx=null;
-let isLearning=false;
-let isDetecting=false;
-let currentLearn=[];
-let lastSampleTime=0;
-let lastTriggeredAt={};
-const SAMPLE_INTERVAL_MS=25;
+/* =========================================================
+   Motion Sound System — JS 完全版（保存対応）
+   ========================================================= */
 
-const vizBuffer=[];
-const master={gainNode:null,vol:0.8};
+/* ---------- 定数 ---------- */
+const STORAGE_KEY = 'motionSoundPatterns_v1';
+const SAMPLE_INTERVAL_MS = 25;
+const LEARN_DURATION_MS = 3000;
 
-/* =========================
-   Audio
-   ========================= */
-function initAudio(){
+/* ---------- Audio ---------- */
+let audioCtx = null;
+const master = { gainNode: null, vol: 0.8 };
+
+/* ---------- 状態 ---------- */
+let isDetecting = false;
+let isLearning = false;
+let learnStartAt = 0;
+let lastSampleTime = 0;
+let currentLearn = [];
+let vizBuffer = [];
+let lastTriggeredAt = {};
+
+/* ---------- データ ---------- */
+const soundMap = { shake: [], x: [], y: [], z: [], learned: [] };
+
+/* ---------- Audio 初期化 ---------- */
+function initAudioIfNeeded(){
   if(audioCtx) return;
-  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
-  master.gainNode=audioCtx.createGain();
-  master.gainNode.gain.value=master.vol;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  master.gainNode = audioCtx.createGain();
+  master.gainNode.gain.value = master.vol;
   master.gainNode.connect(audioCtx.destination);
+
+  document.addEventListener('touchstart', ()=>audioCtx.resume(), { once:true });
+  document.addEventListener('click', ()=>audioCtx.resume(), { once:true });
+
+  log('AudioContext 初期化');
 }
 
-function playRawSound(savedSound){
-  if(!savedSound) return;
-  initAudio();
-  const buf=audioCtx.createBuffer(
-    1,
-    savedSound.audioData.length,
-    savedSound.sampleRate
-  );
-  buf.getChannelData(0).set(savedSound.audioData);
-  const src=audioCtx.createBufferSource();
-  src.buffer=buf;
+/* ---------- Audio Decode 安定化 ---------- */
+function decodeAudioSafe(arrayBuffer){
+  initAudioIfNeeded();
+  return new Promise((resolve,reject)=>{
+    try{
+      const p = audioCtx.decodeAudioData(
+        arrayBuffer.slice(0),
+        buf=>resolve(buf),
+        err=>reject(err)
+      );
+      if(p && p.then) p.then(resolve).catch(reject);
+    }catch(e){ reject(e); }
+  });
+}
+
+/* ---------- 再生 ---------- */
+function playBuffer(buf){
+  if(!buf) return;
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
   src.connect(master.gainNode);
   src.start();
 }
 
-/* =========================
-   保存
-   ========================= */
-function savePattern(){
-  const name=patternName.value.trim();
-  if(!name||currentLearn.length<20){
+/* ---------- 保存用 Audio 変換 ---------- */
+function serializeAudioBuffer(buf){
+  return {
+    sampleRate: buf.sampleRate,
+    data: Array.from(buf.getChannelData(0))
+  };
+}
+
+function restoreAudioBuffer(saved){
+  initAudioIfNeeded();
+  const buf = audioCtx.createBuffer(
+    1,
+    saved.audio.data.length,
+    saved.audio.sampleRate
+  );
+  buf.getChannelData(0).set(saved.audio.data);
+  return buf;
+}
+
+/* ---------- DTW ---------- */
+function dtwDistance(a,b){
+  const n=a.length, m=b.length;
+  const INF=1e9;
+  const D = Array.from({length:n+1},()=>Array(m+1).fill(INF));
+  D[0][0]=0;
+  for(let i=1;i<=n;i++){
+    for(let j=1;j<=m;j++){
+      const cost=Math.abs(a[i-1]-b[j-1]);
+      D[i][j]=cost+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
+    }
+  }
+  return D[n][m]/(n+m);
+}
+
+/* ---------- リサンプル ---------- */
+function resample(arr,target){
+  if(arr.length===0) return Array(target).fill(0);
+  const out=[];
+  for(let i=0;i<target;i++){
+    const t=i*(arr.length-1)/(target-1);
+    const lo=Math.floor(t), hi=Math.ceil(t);
+    out.push(lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo));
+  }
+  return out;
+}
+
+/* ---------- 学習開始 ---------- */
+startLearn.onclick = ()=>{
+  if(isLearning) return;
+  currentLearn=[];
+  isLearning=true;
+  learnStartAt=Date.now();
+  lastSampleTime=0;
+  learnState.textContent='録音中';
+  learnProgress.style.width='0%';
+  log('学習開始');
+
+  const timer=setInterval(()=>{
+    const p=(Date.now()-learnStartAt)/LEARN_DURATION_MS*100;
+    learnProgress.style.width=Math.min(p,100)+'%';
+    if(p>=100){
+      clearInterval(timer);
+      isLearning=false;
+      learnState.textContent='完了';
+      log(`学習完了 (${currentLearn.length})`);
+    }
+  },50);
+};
+
+/* ---------- 保存 ---------- */
+savePattern.onclick = ()=>{
+  const name = patternName.value.trim();
+  if(!name || currentLearn.length<12){
     alert('学習不足');
     return;
   }
-
-  const sel=learnSoundSelect.value;
+  const sel = learnSoundSelect.value;
   if(!sel){ alert('音を選択'); return; }
 
-  const [motion,idx]=sel.split('|');
-  const srcBuf=soundMap[motion][idx].buf;
+  const [motion, idx] = sel.split('|');
+  const src = soundMap[motion][idx];
 
-  const audioData=new Float32Array(srcBuf.getChannelData(0));
-  const pattern={
+  const data = {
     name,
-    data: resample(currentLearn,60),
-    sound:{
-      name:soundMap[motion][idx].name,
-      audioData,
-      sampleRate:srcBuf.sampleRate
-    },
-    created:Date.now()
+    motion: resample(currentLearn,60),
+    audio: serializeAudioBuffer(src.buf),
+    audioName: src.name,
+    created: Date.now()
   };
 
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  saved.push(pattern);
-  localStorage.setItem('motionPatterns',JSON.stringify(saved));
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
+  saved.push(data);
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(saved));
   refreshPatternList();
   log(`保存: ${name}`);
+};
+
+/* ---------- 再生 ---------- */
+function playPatternSound(p){
+  const buf = restoreAudioBuffer(p);
+  playBuffer(buf);
 }
 
-/* =========================
-   DeviceMotion（統合）
-   ========================= */
-window.addEventListener('devicemotion',ev=>{
-  const acc=ev.accelerationIncludingGravity||ev.acceleration;
-  if(!acc) return;
+/* ---------- Pattern List ---------- */
+function refreshPatternList(){
+  patternList.innerHTML='';
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
+  saved.forEach((p,i)=>{
+    const li=document.createElement('li');
+    li.innerHTML=`<strong>${p.name}</strong><small>${p.audioName}</small>`;
+    const btn=document.createElement('button');
+    btn.textContent='▶';
+    btn.onclick=()=>playPatternSound(p);
+    li.appendChild(btn);
+    patternList.appendChild(li);
+  });
+}
 
-  const total=Math.hypot(acc.x||0,acc.y||0,acc.z||0);
-  vizBuffer.push(total);
+/* ---------- DeviceMotion ---------- */
+window.addEventListener('devicemotion',e=>{
+  const a=e.accelerationIncludingGravity;
+  if(!a) return;
+  const t=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+  vizBuffer.push(t);
   if(vizBuffer.length>240) vizBuffer.shift();
-  drawViz();
 
   const now=Date.now();
 
-  /* 学習 */
-  if(isLearning && now-lastSampleTime>SAMPLE_INTERVAL_MS){
-    currentLearn.push(total);
-    lastSampleTime=now;
-    updateLearnInfo();
+  if(isLearning){
+    if(now-lastSampleTime>SAMPLE_INTERVAL_MS){
+      currentLearn.push(t);
+      lastSampleTime=now;
+    }
     return;
   }
 
-  /* 検知 */
   if(!isDetecting) return;
 
-  const saved=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
-  if(!saved.length) return;
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]');
+  if(saved.length===0) return;
 
-  const cand=resample(vizBuffer.slice(-240),60);
+  const candidate=resample(vizBuffer.slice(-240),60);
   let best=null,bestScore=Infinity;
-
-  for(const p of saved){
-    const s=dtwDistance(cand,p.data);
-    if(s<bestScore){ bestScore=s; best=p; }
-  }
+  saved.forEach(p=>{
+    const s=dtwDistance(candidate,p.motion);
+    if(s<bestScore){bestScore=s;best=p;}
+  });
 
   if(best && bestScore<Number(matchThresh.value)){
-    if(now-(lastTriggeredAt[best.name]||0)>Number(cooldown.value)){
-      lastTriggeredAt[best.name]=now;
+    if(now-(lastTriggeredAt.learned||0)>Number(cooldown.value)){
+      lastTriggeredAt.learned=now;
+      playPatternSound(best);
       status(`検出: ${best.name}`);
-      playRawSound(best.sound);
-      log(`再生: ${best.name}`);
     }
   }
 });
 
-/* =========================
-   ボタン
-   ========================= */
-startLearn.onclick=()=>{
-  currentLearn=[];
-  isLearning=true;
-  setTimeout(()=>{
-    isLearning=false;
-    log(`学習完了 (${currentLearn.length})`);
-  },3000);
+/* ---------- 許可 ---------- */
+initBtn.onclick=async()=>{
+  initAudioIfNeeded();
+  if(DeviceMotionEvent.requestPermission){
+    const r=await DeviceMotionEvent.requestPermission();
+    if(r==='granted'){
+      startDetectBtn.disabled=false;
+      status('許可OK');
+    }
+  }else{
+    startDetectBtn.disabled=false;
+  }
 };
 
-savePatternBtn=savePattern;
-
+/* ---------- 検知ON/OFF ---------- */
 startDetectBtn.onclick=()=>{
   isDetecting=true;
   startDetectBtn.disabled=true;
   stopDetectBtn.disabled=false;
-  status('検知ON');
+  status('検知中');
 };
-
 stopDetectBtn.onclick=()=>{
   isDetecting=false;
   startDetectBtn.disabled=false;
   stopDetectBtn.disabled=true;
   status('停止');
 };
+
+/* ---------- ログ ---------- */
+function log(t){
+  const l=document.getElementById('log');
+  l.innerHTML=`[${new Date().toLocaleTimeString()}] ${t}<br>`+l.innerHTML;
+}
+function status(t){
+  document.getElementById('status').textContent='ステータス: '+t;
+}
+
+/* ---------- 初期復元 ---------- */
+window.addEventListener('load',()=>{
+  refreshPatternList();
+});
 </script>
 </body>
 </html>
