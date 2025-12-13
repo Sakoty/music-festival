@@ -384,6 +384,51 @@ function status(t){
 window.addEventListener('load',()=>{
   refreshPatternList();
 });
+
+  /* =========================================================
+   🔊 音ファイル登録処理（欠けていた部分）
+   ========================================================= */
+
+const fileInput = document.getElementById('fileInput');
+const motionSelect = document.getElementById('motionSelect');
+
+fileInput.addEventListener('change', async () => {
+  const files = Array.from(fileInput.files || []);
+  if (files.length === 0) return;
+
+  initAudioIfNeeded();
+
+  const motion = motionSelect.value;
+
+  for (const file of files) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const audioBuffer = await decodeAudioSafe(arrayBuffer);
+
+      if (!audioBuffer) {
+        log(`デコード失敗: ${file.name}`);
+        continue;
+      }
+
+      soundMap[motion].push({
+        name: file.name,
+        buf: audioBuffer
+      });
+
+      log(`音登録成功: ${file.name} → ${motion}`);
+    } catch (e) {
+      console.error(e);
+      log(`音登録エラー: ${file.name}`);
+    }
+  }
+
+  // UI更新
+  refreshLearnSoundSelect();
+  refreshSoundLists();
+
+  // 同じファイルを再選択できるようにクリア
+  fileInput.value = '';
+});
 </script>
 </body>
 </html>
