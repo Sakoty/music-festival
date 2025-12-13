@@ -576,6 +576,84 @@ function log(txt){ const l = document.getElementById('log'); const t = new Date(
 window.addEventListener('load', ()=>{
   refreshSoundLists(); refreshLearnSoundSelect(); refreshPatternList(); drawViz(); drawLearnPreview();
 });
+
+/* ===== 追加フラグ ===== */
+let isDetecting = false;
+
+/* ===== DeviceMotion（学習モーションのみ検知） ===== */
+window.addEventListener('devicemotion', (ev)=>{
+  const acc = ev.accelerationIncludingGravity || ev.acceleration;
+  if(!acc) return;
+
+  const ax = acc.x || 0, ay = acc.y || 0, az = acc.z || 0;
+  const total = Math.sqrt(ax*ax + ay*ay + az*az);
+
+  /* 可視化 */
+  vizBuffer.push(total);
+  if(vizBuffer.length > 240) vizBuffer.shift();
+  drawViz();
+
+  const now = Date.now();
+
+  /* 学習中の記録 */
+  if(isLearning){
+    if(now - lastSampleTime >= SAMPLE_INTERVAL_MS){
+      currentLearn.push(total);
+      lastSampleTime = now;
+      updateLearnInfo();
+    }
+    return;
+  }
+
+  /* ===== 検知OFFなら何もしない ===== */
+  if(!isDetecting) return;
+
+  const cooldownMs = Number(document.getElementById('cooldown').value);
+  const matchThresh = Number(document.getElementById('matchThresh').value);
+
+  /* ===== 学習パターンのみ判定 ===== */
+  const saved = JSON.parse(localStorage.getItem('motionPatterns') || '[]');
+  if(saved.length === 0) return;
+
+  const candidate = resample(vizBuffer.slice(-240), 60);
+
+  let best = null;
+  let bestScore = Infinity;
+
+  for(const p of saved){
+    const score = dtwDistance(candidate, p.data);
+    if(score < bestScore){
+      bestScore = score;
+      best = p;
+    }
+  }
+
+  if(best && bestScore < matchThresh){
+    if(now - (lastTriggeredAt['learned']||0) > cooldownMs){
+      lastTriggeredAt['learned'] = now;
+      status(`学習モーション検出: ${best.name}`);
+      playPatternSound(best);
+      log(`検出: ${best.name} (score=${bestScore.toFixed(2)})`);
+    }
+  }
+});
+
+/* ===== 検知開始/停止 ===== */
+document.getElementById('startDetectBtn').addEventListener('click', ()=>{
+  isDetecting = true;
+  startDetectBtn.disabled = true;
+  stopDetectBtn.disabled = false;
+  status('検知中（学習モーションのみ）');
+  log('検知ON');
+});
+
+document.getElementById('stopDetectBtn').addEventListener('click', ()=>{
+  isDetecting = false;
+  startDetectBtn.disabled = false;
+  stopDetectBtn.disabled = true;
+  status('停止');
+  log('検知OFF');
+});
 </script>
 </body>
 </html>
