@@ -3,38 +3,47 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Motion Sound — 学習専用検知版</title>
+<title>Motion Sound — 学習保存 & 個別音</title>
 <style>
-:root{--accent:#0b84ff}
 body{font-family:system-ui;margin:0;background:#fff}
 .wrap{max-width:900px;margin:auto;padding:16px}
 .card{border:1px solid #ddd;border-radius:10px;padding:14px;margin-bottom:14px}
-button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:600}
+button{background:#0b84ff;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:600}
 button.ghost{background:#eee;color:#111}
-canvas{width:100%;height:100px;background:#081017;border-radius:6px}
+input,select{width:100%;padding:6px;margin-top:6px}
+canvas{width:100%;height:80px;background:#081017;border-radius:6px}
+.list li{border-bottom:1px solid #eee;padding:6px 0}
 #log{background:#000;color:#0f0;height:120px;overflow:auto;font-size:12px;padding:6px}
-.badge{padding:4px 8px;border-radius:6px;background:#eee;font-size:13px}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<h2>Motion Sound — 学習パターン検知のみ</h2>
+<h2>Motion Sound（学習保存 & 個別音）</h2>
 
 <div class="card">
 <button id="initBtn">開始（許可）</button>
 <button id="startDetectBtn" class="ghost" disabled>検知開始</button>
 <button id="stopDetectBtn" class="ghost" disabled>停止</button>
-<div id="status">状態: 待機</div>
+<div id="status">待機</div>
 </div>
 
 <div class="card">
-<h3>学習</h3>
-<input id="patternName" placeholder="パターン名">
+<h3>① モーション学習</h3>
+<input id="patternName" placeholder="動きの名前">
 <button id="startLearn">学習開始（3秒）</button>
-<button id="savePattern" class="ghost">保存</button>
-<div class="badge" id="learnState">未学習</div>
 <canvas id="preview"></canvas>
+</div>
+
+<div class="card">
+<h3>② 音を割り当て</h3>
+<input type="file" id="soundFile" accept="audio/*">
+<button id="savePattern">保存</button>
+</div>
+
+<div class="card">
+<h3>保存済みパターン</h3>
+<ul id="patternList" class="list"></ul>
 </div>
 
 <div class="card">
@@ -43,155 +52,132 @@ canvas{width:100%;height:100px;background:#081017;border-radius:6px}
 </div>
 
 <script>
-/* ========= Audio ========= */
+/* ===== Audio ===== */
 let audioCtx;
 function initAudio(){
  if(!audioCtx){
   audioCtx=new (AudioContext||webkitAudioContext)();
  }
 }
-function playBeep(){
- initAudio();
- const o=audioCtx.createOscillator();
- const g=audioCtx.createGain();
- o.frequency.value=440;
- g.gain.value=0.2;
- o.connect(g).connect(audioCtx.destination);
- o.start();
- o.stop(audioCtx.currentTime+0.15);
+function decode(ab){
+ return audioCtx.decodeAudioData(ab.slice(0));
+}
+function play(buf){
+ if(audioCtx.state==='suspended') audioCtx.resume();
+ const s=audioCtx.createBufferSource();
+ s.buffer=buf;
+ s.connect(audioCtx.destination);
+ s.start();
 }
 
-/* ========= State ========= */
-let isDetecting=false;
-let isLearning=false;
-let currentLearn=[];
-let lastTrigger=0;
+/* ===== State ===== */
+let isDetecting=false,isLearning=false;
+let learnBuf=[];
+let patterns=[];
 
-/* ========= Storage ========= */
-function loadPatterns(){
- return JSON.parse(localStorage.getItem('motionPatterns')||'[]');
+/* ===== Storage ===== */
+function load(){
+ patterns=JSON.parse(localStorage.getItem('motionPatterns')||'[]');
+ renderList();
 }
-function savePattern(name,data){
- const p=loadPatterns();
- p.push({name,data});
- localStorage.setItem('motionPatterns',JSON.stringify(p));
+function save(){
+ localStorage.setItem('motionPatterns',JSON.stringify(patterns));
 }
 
-/* ========= Utils ========= */
-function resample(arr,n){
- if(arr.length===0)return new Array(n).fill(0);
+/* ===== Utils ===== */
+function resample(a,n){
  return [...Array(n)].map((_,i)=>{
-  const t=i*(arr.length-1)/(n-1);
+  const t=i*(a.length-1)/(n-1);
   const lo=Math.floor(t),hi=Math.ceil(t);
-  return lo===hi?arr[lo]:arr[lo]*(hi-t)+arr[hi]*(t-lo);
+  return lo===hi?a[lo]:a[lo]*(hi-t)+a[hi]*(t-lo);
  });
 }
 function dtw(a,b){
  const n=a.length,m=b.length;
- const D=Array.from({length:n+1},()=>Array(m+1).fill(1e9));
+ const D=[...Array(n+1)].map(()=>Array(m+1).fill(1e9));
  D[0][0]=0;
  for(let i=1;i<=n;i++)
-  for(let j=1;j<=m;j++){
-   const c=Math.abs(a[i-1]-b[j-1]);
-   D[i][j]=c+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
-  }
+  for(let j=1;j<=m;j++)
+   D[i][j]=Math.abs(a[i-1]-b[j-1])+Math.min(D[i-1][j],D[i][j-1],D[i-1][j-1]);
  return D[n][m]/(n+m);
 }
 
-/* ========= Learning ========= */
-const preview=document.getElementById('preview');
-const pctx=preview.getContext('2d');
-
+/* ===== Learning ===== */
 document.getElementById('startLearn').onclick=()=>{
- currentLearn=[];
+ learnBuf=[];
  isLearning=true;
- document.getElementById('learnState').textContent='学習中';
- setTimeout(()=>{
-  isLearning=false;
-  document.getElementById('learnState').textContent=`記録:${currentLearn.length}`;
-  draw(currentLearn);
- },3000);
+ setTimeout(()=>{isLearning=false;draw(learnBuf)},3000);
 };
 
-document.getElementById('savePattern').onclick=()=>{
- if(currentLearn.length<10){alert('短すぎます');return;}
- savePattern(
-  document.getElementById('patternName').value||'pattern',
-  resample(currentLearn,60)
- );
- log('保存完了');
+document.getElementById('savePattern').onclick=async()=>{
+ const name=patternName.value.trim();
+ if(!name||learnBuf.length<10){alert('学習不足');return;}
+ const file=soundFile.files[0];
+ if(!file){alert('音を選択');return;}
+ initAudio();
+ const buf=await decode(await file.arrayBuffer());
+ patterns.push({
+  id:Date.now(),
+  name,
+  data:resample(learnBuf,60),
+  sound:{name:file.name,buf}
+ });
+ save(); renderList(); log('保存:'+name);
 };
 
-/* ========= Detection ========= */
+/* ===== Motion ===== */
 window.addEventListener('devicemotion',e=>{
  const a=e.accelerationIncludingGravity;
  if(!a)return;
  const v=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
+ if(isLearning) learnBuf.push(v);
+ if(!isDetecting||patterns.length===0)return;
 
- if(isLearning) currentLearn.push(v);
-
- if(!isDetecting) return;
-
- const patterns=loadPatterns();
- if(patterns.length===0) return;
-
- const candidate=resample(currentLearn.slice(-240),60);
- let best=Infinity;
- let name='';
+ const cand=resample(learnBuf.slice(-240),60);
  patterns.forEach(p=>{
-  const s=dtw(candidate,p.data);
-  if(s<best){best=s;name=p.name;}
+  if(dtw(cand,p.data)<2.5){
+   play(p.sound.buf);
+   log('検知:'+p.name);
+  }
  });
-
- if(best<2.5 && Date.now()-lastTrigger>1000){
-  lastTrigger=Date.now();
-  playBeep();
-  document.getElementById('status').textContent=`検知: ${name} (${best.toFixed(2)})`;
-  log('検知 '+name);
- }
 });
 
-/* ========= UI ========= */
-document.getElementById('initBtn').onclick=async()=>{
+/* ===== UI ===== */
+initBtn.onclick=async()=>{
  initAudio();
  if(DeviceMotionEvent?.requestPermission){
-  const r=await DeviceMotionEvent.requestPermission();
-  if(r!=='granted'){alert('許可必要');return;}
+  if(await DeviceMotionEvent.requestPermission()!=='granted'){alert('許可必要');return;}
  }
- document.getElementById('startDetectBtn').disabled=false;
- log('許可OK');
+ startDetectBtn.disabled=false;
+ log('準備完了');
 };
+startDetectBtn.onclick=()=>{isDetecting=true;};
+stopDetectBtn.onclick=()=>{isDetecting=false;};
 
-document.getElementById('startDetectBtn').onclick=()=>{
- isDetecting=true;
- document.getElementById('stopDetectBtn').disabled=false;
- document.getElementById('startDetectBtn').disabled=true;
- document.getElementById('status').textContent='学習パターン検知中';
-};
-
-document.getElementById('stopDetectBtn').onclick=()=>{
- isDetecting=false;
- document.getElementById('stopDetectBtn').disabled=true;
- document.getElementById('startDetectBtn').disabled=false;
- document.getElementById('status').textContent='停止';
-};
-
-function draw(a){
- preview.width=preview.clientWidth*devicePixelRatio;
- preview.height=preview.clientHeight*devicePixelRatio;
- pctx.clearRect(0,0,preview.width,preview.height);
- pctx.strokeStyle='#0f0';
- pctx.beginPath();
- a.forEach((v,i)=>{
-  const x=i*preview.width/(a.length-1);
-  const y=preview.height-v*10;
-  i?pctx.lineTo(x,y):pctx.moveTo(x,y);
+function renderList(){
+ patternList.innerHTML='';
+ patterns.forEach(p=>{
+  const li=document.createElement('li');
+  li.textContent=`${p.name} 🔊${p.sound.name}`;
+  patternList.appendChild(li);
  });
- pctx.stroke();
 }
-function log(t){
- document.getElementById('log').innerHTML=`${t}<br>`+document.getElementById('log').innerHTML;
+function draw(a){
+ const c=preview,ctx=c.getContext('2d');
+ c.width=c.clientWidth*devicePixelRatio;
+ c.height=c.clientHeight*devicePixelRatio;
+ ctx.strokeStyle='#0f0';ctx.beginPath();
+ a.forEach((v,i)=>{
+  const x=i*c.width/(a.length-1);
+  const y=c.height-v*10;
+  i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+ });
+ ctx.stroke();
 }
+function log(t){logDiv.innerHTML=t+'<br>'+logDiv.innerHTML;}
+
+const logDiv=document.getElementById('log');
+load();
 </script>
 </div>
 </body>
