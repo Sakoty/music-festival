@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Motion Sound Step3</title>
+<title>Motion Sound Step4</title>
 
 <style>
 body {
@@ -44,6 +44,11 @@ input[type=range] {
   width: 100%;
   margin-top: 10px;
 }
+label {
+  font-size: 13px;
+  margin-top: 10px;
+  display: block;
+}
 #status {
   margin-top: 10px;
   font-size: 14px;
@@ -72,11 +77,6 @@ input[type=range] {
   width: 0%;
   background: #0b84ff;
 }
-label {
-  font-size: 13px;
-  margin-top: 10px;
-  display: block;
-}
 #thresholdVal,
 #debug {
   font-size: 12px;
@@ -104,16 +104,18 @@ small {
   <div id="learnInfo">未学習</div>
 
   <label>
-    感度（小さいほど厳しい）
+    感度
     <input id="threshold" type="range" min="1" max="10" step="0.1" value="3.5">
   </label>
   <div id="thresholdVal">閾値: 3.5</div>
   <div id="debug">diff: --</div>
 
+  <button id="saveBtn" class="sub">学習データ保存</button>
+
   <div id="status">待機中</div>
   <div id="motion">動き: ---</div>
 
-  <small>③ 学習モーション検知</small>
+  <small>④ 学習データ保存</small>
 </div>
 
 <script>
@@ -140,6 +142,7 @@ let lastTrigger = 0;
 const startBtn = document.getElementById("startBtn");
 const fileInput = document.getElementById("audioFile");
 const learnBtn = document.getElementById("learnBtn");
+const saveBtn = document.getElementById("saveBtn");
 
 const statusEl = document.getElementById("status");
 const motionEl = document.getElementById("motion");
@@ -230,7 +233,22 @@ learnBtn.addEventListener("click", () => {
 });
 
 /* =========================
-   感度スライダー
+   保存
+   ========================= */
+saveBtn.addEventListener("click", () => {
+  if (!learnedPattern) {
+    statusEl.textContent = "保存する学習データがありません";
+    return;
+  }
+  localStorage.setItem(
+    "motionPattern",
+    JSON.stringify(learnedPattern)
+  );
+  statusEl.textContent = "学習データを保存しました";
+});
+
+/* =========================
+   感度
    ========================= */
 thresholdSlider.addEventListener("input", () => {
   thresholdValEl.textContent = "閾値: " + thresholdSlider.value;
@@ -289,7 +307,7 @@ window.addEventListener("devicemotion", (e) => {
 });
 
 /* =========================
-   Start
+   Start & Load
    ========================= */
 startBtn.addEventListener("click", async () => {
   if (ready) return;
@@ -301,7 +319,16 @@ startBtn.addEventListener("click", async () => {
   initAudio();
   ready = true;
   startBtn.disabled = true;
-  statusEl.textContent = "準備完了";
+
+  /* 保存データ復元 */
+  const saved = localStorage.getItem("motionPattern");
+  if (saved) {
+    learnedPattern = JSON.parse(saved);
+    learnInfoEl.textContent = "保存済み学習データ読込";
+    statusEl.textContent = "準備完了（復元）";
+  } else {
+    statusEl.textContent = "準備完了";
+  }
 });
 </script>
 </body>
