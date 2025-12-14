@@ -2,271 +2,164 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Motion Sound Step3</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Motion Learn Minimal</title>
 
 <style>
-body {
-  margin: 0;
-  height: 100vh;
-  background: #0f1115;
-  font-family: system-ui, -apple-system, sans-serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
+body{
+  font-family: system-ui, -apple-system, BlinkMacSystemFont;
+  background:#f5f7fb;
+  margin:0;
+  padding:20px;
 }
-#app {
-  background: #1b1f2a;
-  border-radius: 18px;
-  padding: 26px;
-  width: 360px;
-  box-shadow: 0 20px 40px rgba(0,0,0,.5);
+.card{
+  background:#fff;
+  border-radius:12px;
+  padding:16px;
+  max-width:480px;
+  margin:auto;
+  box-shadow:0 8px 24px rgba(0,0,0,.08);
 }
-h1 {
-  font-size: 18px;
-  text-align: center;
+button{
+  padding:10px 14px;
+  border:none;
+  border-radius:8px;
+  background:#2563eb;
+  color:#fff;
+  font-weight:600;
+  cursor:pointer;
+  margin-right:6px;
 }
-button {
-  padding: 10px 16px;
-  border-radius: 10px;
-  border: none;
-  background: #0b84ff;
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
+button.secondary{
+  background:#e5e7eb;
+  color:#111;
 }
-button.sub {
-  background: #2b3245;
-}
-input[type=file] {
-  width: 100%;
-  margin-top: 10px;
-}
-#status {
-  margin-top: 10px;
-  font-size: 14px;
-  color: #9ee7ff;
-}
-#motion {
-  margin-top: 6px;
-  font-size: 13px;
-  color: #aaa;
-}
-#learnInfo {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #7CFF7C;
-}
-.bar {
-  height: 8px;
-  background: #333;
-  border-radius: 6px;
-  overflow: hidden;
-  margin-top: 6px;
-}
-.bar i {
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: #0b84ff;
-}
-small {
-  display: block;
-  margin-top: 10px;
-  text-align: center;
-  color: #777;
-}
+#status{margin-top:10px;font-weight:600}
+#debug{margin-top:6px;font-family:monospace}
 </style>
 </head>
 
 <body>
-<div id="app">
-  <h1>Motion Sound</h1>
+<div class="card">
+  <h2>Motion Learning（最小構成）</h2>
 
-  <button id="startBtn">開始</button>
-  <input id="audioFile" type="file" accept="audio/*">
-
-  <button id="learnBtn" class="sub">学習開始（3秒）</button>
-
-  <div class="bar"><i id="learnBar"></i></div>
-  <div id="learnInfo">未学習</div>
+  <button id="permissionBtn">① センサー許可</button>
+  <button id="learnBtn" class="secondary">② 学習（3秒）</button>
 
   <div id="status">待機中</div>
-  <div id="motion">動き: ---</div>
+  <div id="debug">diff: --</div>
 
-  <small>③ 学習モーション検知</small>
+  <audio id="sound" src="sound.mp3"></audio>
+  <p style="font-size:12px;color:#555">
+    ※ sound.mp3 を同じフォルダに置いてください
+  </p>
 </div>
 
 <script>
-/* =========================
-   状態
-   ========================= */
-let audioCtx = null;
-let soundBuffer = null;
-let ready = false;
-
-/* 学習 */
-let isLearning = false;
-let learnData = [];
-let learnedPattern = null;
-let learnStart = 0;
-
-/* 検知 */
-let detectBuffer = [];
-let lastTrigger = 0;
-
-/* =========================
-   DOM
-   ========================= */
-const startBtn = document.getElementById("startBtn");
-const fileInput = document.getElementById("audioFile");
-const learnBtn = document.getElementById("learnBtn");
-
-const statusEl = document.getElementById("status");
-const motionEl = document.getElementById("motion");
-const learnInfoEl = document.getElementById("learnInfo");
-const learnBar = document.getElementById("learnBar");
-
-/* =========================
+/* =====================
    Audio
-   ========================= */
-function initAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === "suspended") audioCtx.resume();
-}
+===================== */
+const audio = document.getElementById("sound");
 
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files[0];
-  if (!file) return;
-  initAudio();
-  try {
-    const ab = await file.arrayBuffer();
-    soundBuffer = await audioCtx.decodeAudioData(ab.slice(0));
-    statusEl.textContent = "音源読み込み完了";
-  } catch {
-    statusEl.textContent = "音源読み込み失敗";
-  }
-});
+/* =====================
+   State
+===================== */
+let learned = [];
+let isLearning = false;
+let lastSampleTime = 0;
 
-function playSound() {
-  if (!audioCtx || !soundBuffer) return;
-  const src = audioCtx.createBufferSource();
-  src.buffer = soundBuffer;
-  src.connect(audioCtx.destination);
-  src.start();
-}
+const SAMPLE_INTERVAL = 25; // ms
+const MATCH_THRESHOLD = 6.0;
 
-/* =========================
-   Permission
-   ========================= */
-async function requestPermission() {
-  if (
-    typeof DeviceMotionEvent !== "undefined" &&
-    typeof DeviceMotionEvent.requestPermission === "function"
-  ) {
-    const res = await DeviceMotionEvent.requestPermission();
-    return res === "granted";
-  }
-  return true;
-}
-
-/* =========================
-   Utility
-   ========================= */
-function resample(arr, len) {
+/* =====================
+   Utils
+===================== */
+function resample(arr, len){
+  if(arr.length === 0) return new Array(len).fill(0);
   const out = [];
-  for (let i = 0; i < len; i++) {
-    const t = i * (arr.length - 1) / (len - 1);
-    const i0 = Math.floor(t);
-    const i1 = Math.ceil(t);
-    out.push(i0 === i1 ? arr[i0] : arr[i0] + (arr[i1] - arr[i0]) * (t - i0));
+  for(let i=0;i<len;i++){
+    const t = i * (arr.length-1) / (len-1);
+    const a = Math.floor(t);
+    const b = Math.ceil(t);
+    out.push(a===b ? arr[a] : arr[a]*(b-t)+arr[b]*(t-a));
   }
   return out;
 }
 
-function distance(a, b) {
+function diff(a,b){
   let d = 0;
-  for (let i = 0; i < a.length; i++) {
-    d += Math.abs(a[i] - b[i]);
+  for(let i=0;i<a.length;i++){
+    d += Math.abs(a[i]-b[i]);
   }
   return d / a.length;
 }
 
-/* =========================
-   学習
-   ========================= */
-learnBtn.addEventListener("click", () => {
-  if (!ready) return;
-  learnData = [];
+/* =====================
+   UI
+===================== */
+const statusEl = document.getElementById("status");
+const debugEl  = document.getElementById("debug");
+
+/* =====================
+   Buttons
+===================== */
+document.getElementById("permissionBtn").onclick = async ()=>{
+  if(typeof DeviceMotionEvent?.requestPermission === "function"){
+    const r = await DeviceMotionEvent.requestPermission();
+    if(r !== "granted"){
+      alert("許可が必要です");
+      return;
+    }
+  }
+  statusEl.textContent = "センサー許可OK";
+};
+
+document.getElementById("learnBtn").onclick = ()=>{
+  learned = [];
   isLearning = true;
-  learnStart = Date.now();
-  learnBar.style.width = "0%";
-  learnInfoEl.textContent = "学習中…";
-});
+  statusEl.textContent = "学習中…（3秒）";
+  setTimeout(()=>{
+    isLearning = false;
+    statusEl.textContent = "学習完了";
+    console.log("learned:", learned.length);
+  },3000);
+};
 
-window.addEventListener("devicemotion", (e) => {
-  if (!ready) return;
-  const acc = e.accelerationIncludingGravity;
-  if (!acc) return;
+/* =====================
+   Motion
+===================== */
+window.addEventListener("devicemotion", e=>{
+  const acc = e.acceleration; // ★重力除外
+  if(!acc) return;
 
-  const x = acc.x || 0;
-  const y = acc.y || 0;
-  const z = acc.z || 0;
-  const power = Math.sqrt(x*x + y*y + z*z);
-
-  motionEl.textContent = "動き: " + power.toFixed(2);
   const now = Date.now();
+  if(now - lastSampleTime < SAMPLE_INTERVAL) return;
+  lastSampleTime = now;
 
-  /* 学習中 */
-  if (isLearning) {
-    learnData.push(power);
-    const elapsed = now - learnStart;
-    learnBar.style.width = Math.min(elapsed / 3000, 1) * 100 + "%";
+  const power = Math.sqrt(
+    (acc.x||0)**2 +
+    (acc.y||0)**2 +
+    (acc.z||0)**2
+  );
 
-    if (elapsed >= 3000) {
-      isLearning = false;
-      learnedPattern = resample(learnData, 60);
-      learnInfoEl.textContent = "学習完了";
-      statusEl.textContent = "検知待機中";
-    }
+  if(isLearning){
+    learned.push(power);
     return;
   }
 
-  /* 検知 */
-  if (!learnedPattern) return;
+  if(learned.length < 10) return;
 
-  detectBuffer.push(power);
-  if (detectBuffer.length > 60) detectBuffer.shift();
+  const recent = resample(learned.slice(-learned.length), 60);
+  const current = resample([power], 60);
 
-  if (detectBuffer.length === 60 && now - lastTrigger > 1200) {
-    const cur = resample(detectBuffer, 60);
-    const diff = distance(cur, learnedPattern);
+  const d = diff(recent, current);
+  debugEl.textContent = "diff: " + d.toFixed(2);
 
-    if (diff < 2.5) {
-      lastTrigger = now;
-      playSound();
-      statusEl.textContent = "学習動作 検出！";
-    }
+  if(d < MATCH_THRESHOLD){
+    audio.currentTime = 0;
+    audio.play();
+    statusEl.textContent = "一致！音再生";
   }
-});
-
-/* =========================
-   Start
-   ========================= */
-startBtn.addEventListener("click", async () => {
-  if (ready) return;
-  const ok = await requestPermission();
-  if (!ok) {
-    statusEl.textContent = "センサー許可が必要";
-    return;
-  }
-  initAudio();
-  ready = true;
-  startBtn.disabled = true;
-  statusEl.textContent = "準備完了";
 });
 </script>
 </body>
