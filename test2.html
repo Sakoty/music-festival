@@ -127,9 +127,10 @@ let soundBuffer = null;
 let ready = false;
 
 /* 学習 */
+const LEARN_DURATION = 2000; // ★ 2秒
 let isLearning = false;
 let learnData = [];
-let learnedPattern = null;
+let learnedPatterns = [];   // ★ 複数学習
 let learnStart = 0;
 
 /* 検知 */
@@ -220,8 +221,17 @@ function distance(a, b) {
   return d / a.length;
 }
 
+/* ★ 複数学習平均との差分 */
+function averageDiff(cur, patterns) {
+  let sum = 0;
+  for (const p of patterns) {
+    sum += distance(cur, p);
+  }
+  return sum / patterns.length;
+}
+
 /* =========================
-   学習
+   学習（複数回）
    ========================= */
 learnBtn.addEventListener("click", () => {
   if (!ready) return;
@@ -229,29 +239,7 @@ learnBtn.addEventListener("click", () => {
   isLearning = true;
   learnStart = Date.now();
   learnBar.style.width = "0%";
-  learnInfoEl.textContent = "学習中…";
-});
-
-/* =========================
-   保存
-   ========================= */
-saveBtn.addEventListener("click", () => {
-  if (!learnedPattern) {
-    statusEl.textContent = "保存する学習データがありません";
-    return;
-  }
-  localStorage.setItem(
-    "motionPattern",
-    JSON.stringify(learnedPattern)
-  );
-  statusEl.textContent = "学習データを保存しました";
-});
-
-/* =========================
-   感度
-   ========================= */
-thresholdSlider.addEventListener("input", () => {
-  thresholdValEl.textContent = "閾値: " + thresholdSlider.value;
+  learnInfoEl.textContent = "学習中…（2秒）";
 });
 
 /* =========================
@@ -274,29 +262,31 @@ window.addEventListener("devicemotion", (e) => {
   if (isLearning) {
     learnData.push(power);
     const elapsed = now - learnStart;
-    learnBar.style.width = Math.min(elapsed / 3000, 1) * 100 + "%";
+    learnBar.style.width =
+      Math.min(elapsed / LEARN_DURATION, 1) * 100 + "%";
 
-    if (elapsed >= 3000) {
+    if (elapsed >= LEARN_DURATION) {
       isLearning = false;
-      learnedPattern = resample(learnData, 60);
-      learnInfoEl.textContent = "学習完了";
+      learnedPatterns.push(resample(learnData, 60)); // ★ 追加
+      learnInfoEl.textContent =
+        `学習完了（${learnedPatterns.length} 回）`;
       statusEl.textContent = "検知待機中";
     }
     return;
   }
 
   /* 検知 */
-  if (!learnedPattern) return;
+  if (learnedPatterns.length === 0) return;
 
   detectBuffer.push(power);
   if (detectBuffer.length > 60) detectBuffer.shift();
 
   if (detectBuffer.length === 60 && now - lastTrigger > 1200) {
     const cur = resample(detectBuffer, 60);
-    const diff = distance(cur, learnedPattern);
+    const diff = averageDiff(cur, learnedPatterns);
     const threshold = Number(thresholdSlider.value);
 
-    debugEl.textContent = "diff: " + diff.toFixed(2);
+    debugEl.textContent = "diff(avg): " + diff.toFixed(2);
 
     if (diff < threshold) {
       lastTrigger = now;
@@ -307,7 +297,7 @@ window.addEventListener("devicemotion", (e) => {
 });
 
 /* =========================
-   Start & Load
+   Start
    ========================= */
 startBtn.addEventListener("click", async () => {
   if (ready) return;
@@ -319,16 +309,14 @@ startBtn.addEventListener("click", async () => {
   initAudio();
   ready = true;
   startBtn.disabled = true;
+  statusEl.textContent = "準備完了";
+});
 
-  /* 保存データ復元 */
-  const saved = localStorage.getItem("motionPattern");
-  if (saved) {
-    learnedPattern = JSON.parse(saved);
-    learnInfoEl.textContent = "保存済み学習データ読込";
-    statusEl.textContent = "準備完了（復元）";
-  } else {
-    statusEl.textContent = "準備完了";
-  }
+/* =========================
+   感度UI
+   ========================= */
+thresholdSlider.addEventListener("input", () => {
+  thresholdValEl.textContent = "閾値: " + thresholdSlider.value;
 });
 </script>
 </body>
