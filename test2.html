@@ -275,26 +275,68 @@ window.addEventListener("devicemotion", (e) => {
     return;
   }
 
-  /* 検知 */
-  if (learnedPatterns.length === 0) return;
+  function normalize(arr) {
+  const avg = arr.reduce((a,b)=>a+b,0) / arr.length;
+  const centered = arr.map(v => v - avg);
+  const max = Math.max(...centered.map(v => Math.abs(v))) || 1;
+  return centered.map(v => v / max);
+}
 
-  detectBuffer.push(power);
-  if (detectBuffer.length > 60) detectBuffer.shift();
-
-  if (detectBuffer.length === 60 && now - lastTrigger > 1200) {
-    const cur = resample(detectBuffer, 60);
-    const diff = averageDiff(cur, learnedPatterns);
-    const threshold = Number(thresholdSlider.value);
-
-    debugEl.textContent = "diff(avg): " + diff.toFixed(2);
-
-    if (diff < threshold) {
-      lastTrigger = now;
-      playSound();
-      statusEl.textContent = "学習動作 検出！";
-    }
+  function features(arr) {
+  let speed = 0;
+  for (let i = 1; i < arr.length; i++) {
+    speed += Math.abs(arr[i] - arr[i-1]);
   }
-});
+  return {
+    max: Math.max(...arr),
+    min: Math.min(...arr),
+    speed: speed / arr.length
+  };
+}
+
+  function similarity(cur, patterns) {
+  let total = 0;
+
+  for (const p of patterns) {
+    const dShape = distance(cur, p);
+
+    const f1 = features(cur);
+    const f2 = features(p);
+
+    const dFeat =
+      Math.abs(f1.max - f2.max) +
+      Math.abs(f1.min - f2.min) +
+      Math.abs(f1.speed - f2.speed);
+
+    total += dShape * 0.7 + dFeat * 0.3;
+  }
+
+  return total / patterns.length;
+}
+
+  /* 検知 */
+if (learnedPatterns.length === 0) return;
+
+detectBuffer.push(power);
+if (detectBuffer.length > 60) detectBuffer.shift();
+
+if (detectBuffer.length === 60 && now - lastTrigger > 1200) {
+
+  let cur = resample(detectBuffer, 60);
+  cur = normalize(cur); // ★追加
+
+  const score = similarity(cur, learnedPatterns);
+  const threshold = Number(thresholdSlider.value);
+
+  debugEl.textContent = "similarity: " + score.toFixed(2);
+
+  if (score < threshold) {
+    lastTrigger = now;
+    playSound();
+    statusEl.textContent = "学習動作 検出！";
+  }
+}
+
 
 /* =========================
    Start
