@@ -129,15 +129,20 @@ let ready = false;
 /* 学習 */
 let isLearning = false;
 let learnData = [];
-let learnedPatterns = [];   // ★ 複数学習
+let learnedPatterns = []; // ← 複数保存
 let learnStart = 0;
 
 /* 検知 */
 let detectBuffer = [];
 let lastTrigger = 0;
 
-/* 感度（あとでスライダー対応しやすい） */
-let threshold = 1.4;
+/* 調整値（超重要） */
+const LEARN_TIME = 2000;       // 2秒
+const SAMPLE_LEN = 60;
+const THRESHOLD = 2.2;         // diff（小さいほど一致）
+const MIN_MOTION_POWER = 1.2;  // 静止除外
+const MIN_VARIANCE = 0.15;     // 動作判定
+const COOLDOWN = 1200;
 
 /* =========================
    DOM
@@ -164,14 +169,12 @@ function initAudio() {
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) return;
-
   initAudio();
-
   try {
     const ab = await file.arrayBuffer();
     soundBuffer = await audioCtx.decodeAudioData(ab.slice(0));
     statusEl.textContent = "音源読み込み完了";
-  } catch (e) {
+  } catch {
     statusEl.textContent = "音源読み込み失敗";
   }
 });
@@ -202,42 +205,17 @@ async function requestPermission() {
    Utility
 ========================= */
 function resample(arr, len) {
+  if (arr.length === 0) return new Array(len).fill(0);
   const out = [];
   for (let i = 0; i < len; i++) {
     const t = i * (arr.length - 1) / (len - 1);
     const i0 = Math.floor(t);
     const i1 = Math.ceil(t);
-    out.push(
-      i0 === i1
-        ? arr[i0]
-        : arr[i0] + (arr[i1] - arr[i0]) * (t - i0)
-    );
+    out.push(i0 === i1 ? arr[i0] : arr[i0] + (arr[i1] - arr[i0]) * (t - i0));
   }
   return out;
 }
 
-/* ★ 正規化（強弱を無視） */
-function normalize(arr) {
-  const avg = arr.reduce((a, b) => a + b, 0) / arr.length;
-  const centered = arr.map(v => v - avg);
-  const max = Math.max(...centered.map(v => Math.abs(v))) || 1;
-  return centered.map(v => v / max);
-}
-
-/* ★ 特徴量 */
-function features(arr) {
-  let speed = 0;
-  for (let i = 1; i < arr.length; i++) {
-    speed += Math.abs(arr[i] - arr[i - 1]);
-  }
-  return {
-    max: Math.max(...arr),
-    min: Math.min(...arr),
-    speed: speed / arr.length
-  };
-}
-
-/* ★ 距離 */
 function distance(a, b) {
   let d = 0;
   for (let i = 0; i < a.length; i++) {
@@ -246,46 +224,25 @@ function distance(a, b) {
   return d / a.length;
 }
 
-/* ★ 複数学習パターンとの類似度 */
-function similarity(cur, patterns) {
-  let total = 0;
-
-  for (const p of patterns) {
-    const dShape = distance(cur, p);
-
-    const f1 = features(cur);
-    const f2 = features(p);
-
-    const dFeat =
-      Math.abs(f1.max - f2.max) +
-      Math.abs(f1.min - f2.min) +
-      Math.abs(f1.speed - f2.speed);
-
-    total += dShape * 0.7 + dFeat * 0.3;
-  }
-
-  return total / patterns.length;
+function variance(arr) {
+  const avg = arr.reduce((a,b)=>a+b,0) / arr.length;
+  return arr.reduce((s,v)=>s+(v-avg)**2,0) / arr.length;
 }
 
 /* =========================
-   学習（2秒）
+   学習
 ========================= */
 learnBtn.addEventListener("click", () => {
   if (!ready) return;
-
   learnData = [];
   isLearning = true;
   learnStart = Date.now();
   learnBar.style.width = "0%";
-  learnInfoEl.textContent = "学習中…（2秒）";
+  learnInfoEl.textContent = "学習中…";
 });
 
-/* =========================
-   Motion
-========================= */
 window.addEventListener("devicemotion", (e) => {
   if (!ready) return;
-
   const acc = e.accelerationIncludingGravity;
   if (!acc) return;
 
@@ -297,39 +254,44 @@ window.addEventListener("devicemotion", (e) => {
   motionEl.textContent = "動き: " + power.toFixed(2);
   const now = Date.now();
 
-  /* ---- 学習 ---- */
+  /* 学習 */
   if (isLearning) {
     learnData.push(power);
-
     const elapsed = now - learnStart;
-    learnBar.style.width = Math.min(elapsed / 2000, 1) * 100 + "%";
+    learnBar.style.width = Math.min(elapsed / LEARN_TIME, 1) * 100 + "%";
 
-    if (elapsed >= 2000) {
+    if (elapsed >= LEARN_TIME) {
       isLearning = false;
-
-      let p = resample(learnData, 60);
-      p = normalize(p);
-
-      learnedPatterns.push(p);   // ★ 追加
-      learnInfoEl.textContent = `学習済み: ${learnedPatterns.length} 回`;
+      learnedPatterns.push(resample(learnData, SAMPLE_LEN));
+      learnInfoEl.textContent = `学習済み (${learnedPatterns.length})`;
       statusEl.textContent = "検知待機中";
     }
     return;
   }
 
-  /* ---- 検知 ---- */
+  /* 検知 */
   if (learnedPatterns.length === 0) return;
 
   detectBuffer.push(power);
-  if (detectBuffer.length > 60) detectBuffer.shift();
+  if (detectBuffer.length > SAMPLE_LEN) detectBuffer.shift();
 
-  if (detectBuffer.length === 60 && now - lastTrigger > 1200) {
-    let cur = resample(detectBuffer, 60);
-    cur = normalize(cur);
+  if (detectBuffer.length === SAMPLE_LEN && now - lastTrigger > COOLDOWN) {
+    const avg = detectBuffer.reduce((a,b)=>a+b,0) / detectBuffer.length;
+    const varP = variance(detectBuffer);
 
-    const score = similarity(cur, learnedPatterns);
+    /* 静止・微振動を完全除外 */
+    if (avg < MIN_MOTION_POWER) return;
+    if (varP < MIN_VARIANCE) return;
 
-    if (score < threshold) {
+    const cur = resample(detectBuffer, SAMPLE_LEN);
+    let best = Infinity;
+
+    for (const p of learnedPatterns) {
+      const d = distance(cur, p);
+      if (d < best) best = d;
+    }
+
+    if (best < THRESHOLD) {
       lastTrigger = now;
       playSound();
       statusEl.textContent = "学習動作 検出！";
@@ -342,13 +304,11 @@ window.addEventListener("devicemotion", (e) => {
 ========================= */
 startBtn.addEventListener("click", async () => {
   if (ready) return;
-
   const ok = await requestPermission();
   if (!ok) {
     statusEl.textContent = "センサー許可が必要";
     return;
   }
-
   initAudio();
   ready = true;
   startBtn.disabled = true;
