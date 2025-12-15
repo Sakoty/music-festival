@@ -275,14 +275,14 @@ window.addEventListener("devicemotion", (e) => {
     return;
   }
 
-  function normalize(arr) {
+function normalize(arr) {
   const avg = arr.reduce((a,b)=>a+b,0) / arr.length;
   const centered = arr.map(v => v - avg);
   const max = Math.max(...centered.map(v => Math.abs(v))) || 1;
   return centered.map(v => v / max);
 }
 
-  function features(arr) {
+function features(arr) {
   let speed = 0;
   for (let i = 1; i < arr.length; i++) {
     speed += Math.abs(arr[i] - arr[i-1]);
@@ -294,7 +294,7 @@ window.addEventListener("devicemotion", (e) => {
   };
 }
 
-  function similarity(cur, patterns) {
+function similarity(cur, patterns) {
   let total = 0;
 
   for (const p of patterns) {
